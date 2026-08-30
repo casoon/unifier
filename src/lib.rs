@@ -1,48 +1,35 @@
 //! `unifier` — constraint satisfaction / optimization (CSP/COP) modeling
 //! and solver framework for Rust, built on [`pathwise`](https://github.com/casoon/pathwise).
 //!
-//! Concept and scope: see `README.md`. Implementation plan: `plan/`
-//! (untracked, local only).
+//! Concept and scope: see `README.md`. Implementation plan: `plan/`.
 //!
-//! Scaffold only — no logic yet. Module layout follows the layered
-//! architecture from `plan/01-concept.md`:
+//! Layered architecture:
 //!
 //! ```text
-//! model        — variable, domain, interval, activity, resource
+//! model        — variable, domain, interval, activity, resource, group
 //! constraint   — equal, not_equal, all_different, no_overlap, cumulative
-//! propagation  — constraint graph, propagators
+//! propagation  — constraint graph, AC-3 propagator engine
 //! score        — hard/soft priority scoring, incremental updates
-//! solver       — backtracking, branch_and_bound, local_search, lns
+//! solver       — backtracking (MRV), branch_and_bound
 //! dsl          — problem-building surface API
 //! ```
 
-// TODO(model): Variable<T>, Domain (BitSet/Range/SparseSet), Interval
-// (start/duration/end), Resource (capacity), Activity (interval +
-// resource demands), Group/CompositeActivity (shared interval).
-// mod model;
+pub mod constraint;
+pub mod dsl;
+pub mod model;
+pub mod propagation;
+pub mod score;
+pub mod solver;
 
-// TODO(constraint): Equal, NotEqual, LessThan, AllDifferent, NoOverlap,
-// Cumulative, Precedence, ExactlyOne, AtMost, AtLeast, AllowedValues,
-// ForbiddenValues. Global constraints — see plan/01-concept.md for MVP
-// subset.
-// mod constraint;
-
-// TODO(propagation): constraint graph (hypergraph: Variable —
-// Constraint — Variable), propagators reusing `pathwise`'s
-// arc-consistency primitives where applicable.
-// mod propagation;
-
-// TODO(score): hard/soft priority levels, incremental scoring (only
-// recompute constraints touched by a changed variable, not the whole
-// model).
-// mod score;
-
-// TODO(solver): backtracking + MRV/fail-first heuristic, branch_and_bound
-// (reusing `pathwise::optimization`), local_search, lns (large
-// neighborhood search). Anytime: first valid solution fast, then
-// iterative improvement, cancellable at any time.
-// mod solver;
-
-// TODO(dsl): problem-building surface API (activity()/resource()/
-// constraint() builders) — see plan/01-concept.md for the sketch.
-// mod dsl;
+pub use constraint::{
+    AllDifferent, AllowedValues, AtLeast, AtMost, Constraint, Cumulative, Equal, ExactlyOne,
+    ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Precedence, TaskDemand,
+};
+pub use dsl::ModelBuilder;
+pub use model::{Activity, Domain, Group, Interval, Resource, Variable, VariableId};
+pub use propagation::{ConstraintGraph, PropagationEngine};
+pub use score::{HardSoftScore, ScoreCalculator};
+pub use solver::{
+    BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LocalSearchSolver, LnsSolver,
+    ParallelSolver, SearchStatistics, SolveResult, SolverOptions, UnifierProblemAdapter,
+};

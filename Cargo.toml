@@ -7,3 +7,8 @@ license = "MIT"
 repository = "https://github.com/casoon/unifier"
 
 [dependencies]
+pathwise = { path = "../pathwise" }
+
+[dev-dependencies]
+proptest = "1.5"
+

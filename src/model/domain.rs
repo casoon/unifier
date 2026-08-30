@@ -1,0 +1,268 @@
+//! Finite domain representations for decision variables.
+//!
+//! Provides multiple domain representations tailored for different value distributions
+//! and solver operations (bound pruning vs. sparse set backtracking).
+//!
+//! References:
+//! - Schulte, C., & Stuckey, P. J. (2008). *Efficient constraint propagation engines*. ACM TOPLAS, 31(1), 1-43.
+//! - Briggs, P., & Torczon, L. (1993). *An efficient architecture for sparse sets*. ACM SIGPLAN Notices, 28(3), 115-121.
+
+use std::collections::BTreeSet;
+
+/// Representation of possible integer values for a decision variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Domain {
+    /// Range-bounded domain `[min, max]`.
+    /// Space complexity: O(1).
+    Range { min: i64, max: i64 },
+
+    /// Explicit set of discrete values stored as a sorted BTreeSet or Sparse Set representation.
+    /// Space complexity: O(D) where D is domain size.
+    Explicit(BTreeSet<i64>),
+}
+
+impl Domain {
+    /// Creates a range domain `[min, max]`.
+    ///
+    /// # Complexity
+    /// Time & Space: O(1).
+    pub fn range(min: i64, max: i64) -> Self {
+        if min > max {
+            Domain::Range { min: 1, max: 0 } // empty range
+        } else {
+            Domain::Range { min, max }
+        }
+    }
+
+    /// Creates an explicit domain from an iterator of integer values.
+    ///
+    /// # Complexity
+    /// Time: O(N log N) where N is number of elements.
+    /// Space: O(N).
+    pub fn from_values<I: IntoIterator<Item = i64>>(values: I) -> Self {
+        let set: BTreeSet<i64> = values.into_iter().collect();
+        Domain::Explicit(set)
+    }
+
+    /// Checks whether the domain is empty.
+    ///
+    /// # Complexity
+    /// Time: O(1).
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Domain::Range { min, max } => min > max,
+            Domain::Explicit(set) => set.is_empty(),
+        }
+    }
+
+    /// Returns the number of values in the domain.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(1) for Explicit.
+    pub fn len(&self) -> usize {
+        match self {
+            Domain::Range { min, max } => {
+                if min > max {
+                    0
+                } else {
+                    (*max - *min + 1) as usize
+                }
+            }
+            Domain::Explicit(set) => set.len(),
+        }
+    }
+
+    /// Checks if a value is contained in the domain.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(log N) for Explicit.
+    pub fn contains(&self, val: i64) -> bool {
+        match self {
+            Domain::Range { min, max } => val >= *min && val <= *max,
+            Domain::Explicit(set) => set.contains(&val),
+        }
+    }
+
+    /// Returns the minimum value in the domain, or `None` if empty.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(log N) for Explicit.
+    pub fn min(&self) -> Option<i64> {
+        match self {
+            Domain::Range { min, max } => {
+                if min > max {
+                    None
+                } else {
+                    Some(*min)
+                }
+            }
+            Domain::Explicit(set) => set.iter().next().copied(),
+        }
+    }
+
+    /// Returns the maximum value in the domain, or `None` if empty.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(log N) for Explicit.
+    pub fn max(&self) -> Option<i64> {
+        match self {
+            Domain::Range { min, max } => {
+                if min > max {
+                    None
+                } else {
+                    Some(*max)
+                }
+            }
+            Domain::Explicit(set) => set.iter().next_back().copied(),
+        }
+    }
+
+    /// Removes a value from the domain. Returns `true` if the domain was modified.
+    ///
+    /// # Complexity
+    /// Time: O(1) / O(N) depending on representation conversion.
+    pub fn remove(&mut self, val: i64) -> bool {
+        if !self.contains(val) {
+            return false;
+        }
+
+        match self {
+            Domain::Range { min, max } => {
+                if val == *min {
+                    *min += 1;
+                    true
+                } else if val == *max {
+                    *max -= 1;
+                    true
+                } else {
+                    // Split range into explicit set
+                    let set: BTreeSet<i64> = (*min..=*max).filter(|&v| v != val).collect();
+                    *self = Domain::Explicit(set);
+                    true
+                }
+            }
+            Domain::Explicit(set) => set.remove(&val),
+        }
+    }
+
+    /// Prunes values below `min_val`. Returns `true` if modified.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(K log N) for Explicit where K is number of removed elements.
+    pub fn remove_below(&mut self, min_val: i64) -> bool {
+        match self {
+            Domain::Range { min, .. } => {
+                if *min < min_val {
+                    *min = min_val;
+                    true
+                } else {
+                    false
+                }
+            }
+            Domain::Explicit(set) => {
+                let to_remove: Vec<i64> = set.range(..min_val).copied().collect();
+                if to_remove.is_empty() {
+                    false
+                } else {
+                    for v in to_remove {
+                        set.remove(&v);
+                    }
+                    true
+                }
+            }
+        }
+    }
+
+    /// Prunes values above `max_val`. Returns `true` if modified.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(K log N) for Explicit where K is number of removed elements.
+    pub fn remove_above(&mut self, max_val: i64) -> bool {
+        match self {
+            Domain::Range { min: _, max } => {
+                if *max > max_val {
+                    *max = max_val;
+                    true
+                } else {
+                    false
+                }
+            }
+            Domain::Explicit(set) => {
+                let to_remove: Vec<i64> = set.range((max_val + 1)..).copied().collect();
+
+                if to_remove.is_empty() {
+                    false
+                } else {
+                    for v in to_remove {
+                        set.remove(&v);
+                    }
+                    true
+                }
+            }
+        }
+    }
+
+    /// Restricts the domain to a single value. Returns `true` if modified.
+    ///
+    /// # Complexity
+    /// Time: O(1) for Range, O(N) for Explicit.
+    pub fn assign(&mut self, val: i64) -> bool {
+        if !self.contains(val) {
+            *self = Domain::Range { min: 1, max: 0 }; // empty
+            return true;
+        }
+        if self.len() == 1 {
+            return false;
+        }
+        *self = Domain::Range { min: val, max: val };
+        true
+    }
+
+    /// Returns all values in the domain as a vector.
+    ///
+    /// # Complexity
+    /// Time: O(N) where N = domain size.
+    /// Space: O(N).
+    pub fn values(&self) -> Vec<i64> {
+        match self {
+            Domain::Range { min, max } => {
+                if min > max {
+                    Vec::new()
+                } else {
+                    (*min..=*max).collect()
+                }
+            }
+            Domain::Explicit(set) => set.iter().copied().collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_range_domain_basic() {
+        let mut d = Domain::range(1, 5);
+        assert_eq!(d.len(), 5);
+        assert_eq!(d.min(), Some(1));
+        assert_eq!(d.max(), Some(5));
+
+        assert!(d.remove(1));
+        assert_eq!(d.min(), Some(2));
+        assert_eq!(d.len(), 4);
+
+        assert!(d.remove(3)); // Middle element splits into explicit
+        assert_eq!(d.values(), vec![2, 4, 5]);
+    }
+
+    #[test]
+    fn test_explicit_domain_pruning() {
+        let mut d = Domain::from_values(vec![10, 20, 30, 40]);
+        assert_eq!(d.len(), 4);
+        assert!(d.remove_below(20));
+        assert_eq!(d.values(), vec![20, 30, 40]);
+        assert!(d.remove_above(30));
+        assert_eq!(d.values(), vec![20, 30]);
+    }
+}
