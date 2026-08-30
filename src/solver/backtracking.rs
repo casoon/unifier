@@ -12,7 +12,7 @@ use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::ConstraintGraph;
 use crate::score::ScoreCalculator;
-use crate::solver::{SolveResult, SolverOptions};
+use crate::solver::{is_timed_out, select_mrv_variable, SolveResult, SolverOptions};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -58,55 +58,11 @@ impl BacktrackingSolver {
         ) {
             let score = self.score_calculator.calculate_score(graph, &assignment);
             SolveResult::Feasible { assignment, score }
-        } else if self.is_timed_out(options, start_time, nodes_count) {
+        } else if is_timed_out(options, start_time, nodes_count) {
             SolveResult::Timeout
         } else {
             SolveResult::Infeasible
         }
-    }
-
-    fn is_timed_out(&self, options: &SolverOptions, start_time: Instant, nodes_count: u64) -> bool {
-        if let Some(token) = &options.cancellation_token {
-            if token.is_cancelled() {
-                return true;
-            }
-        }
-        if let Some(limit) = options.time_limit {
-            if start_time.elapsed() >= limit {
-                return true;
-            }
-        }
-        if let Some(max_nodes) = options.max_nodes {
-            if nodes_count >= max_nodes {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Minimum Remaining Values (MRV / Fail-First) heuristic selecting unassigned variable with smallest domain.
-    fn select_mrv_variable(
-        &self,
-        graph: &ConstraintGraph,
-        domains: &HashMap<VariableId, Domain>,
-        assignment: &HashMap<VariableId, i64>,
-    ) -> Option<VariableId> {
-        let mut best_var = None;
-        let mut min_domain_size = usize::MAX;
-
-        for &var_id in graph.variables().keys() {
-            if !assignment.contains_key(&var_id) {
-                if let Some(domain) = domains.get(&var_id) {
-                    let len = domain.len();
-                    if len < min_domain_size {
-                        min_domain_size = len;
-                        best_var = Some(var_id);
-                    }
-                }
-            }
-        }
-
-        best_var
     }
 
     fn backtrack(
@@ -118,7 +74,7 @@ impl BacktrackingSolver {
         start_time: Instant,
         nodes_count: &mut u64,
     ) -> bool {
-        if self.is_timed_out(options, start_time, *nodes_count) {
+        if is_timed_out(options, start_time, *nodes_count) {
             return false;
         }
 
@@ -131,7 +87,7 @@ impl BacktrackingSolver {
         }
 
         // Select next variable via MRV heuristic
-        let var_id = match self.select_mrv_variable(graph, domains, assignment) {
+        let var_id = match select_mrv_variable(graph, domains, assignment) {
             Some(v) => v,
             None => return assignment.len() == graph.variables().len(),
         };

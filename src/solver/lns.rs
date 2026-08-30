@@ -11,7 +11,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ConstraintGraph;
 use crate::solver::backtracking::BacktrackingSolver;
-use crate::solver::{SolveResult, SolverOptions};
+use crate::solver::{is_timed_out, SolveResult, SolverOptions};
 use std::time::Instant;
 
 /// Large Neighborhood Search solver.
@@ -59,9 +59,16 @@ impl LnsSolver {
         let mut lns_step = 0u64;
 
         let vars: Vec<VariableId> = graph.variables().keys().copied().collect();
+        if vars.is_empty() {
+            // No variables to destroy/repair; the initial solution is already optimal.
+            return SolveResult::Feasible {
+                assignment: best_assignment,
+                score: best_score,
+            };
+        }
         let n_destroy = ((vars.len() as f64) * self.destroy_fraction).max(1.0) as usize;
 
-        while !self.is_timed_out(options, start_time, lns_step) {
+        while !is_timed_out(options, start_time, lns_step) {
             lns_step += 1;
 
             // Destroy phase: Freeze (1 - destroy_fraction) variables, unassign the remaining
@@ -105,23 +112,20 @@ impl LnsSolver {
             score: best_score,
         }
     }
+}
 
-    fn is_timed_out(&self, options: &SolverOptions, start_time: Instant, step_count: u64) -> bool {
-        if let Some(token) = &options.cancellation_token {
-            if token.is_cancelled() {
-                return true;
-            }
-        }
-        if let Some(limit) = options.time_limit {
-            if start_time.elapsed() >= limit {
-                return true;
-            }
-        }
-        if let Some(max_nodes) = options.max_nodes {
-            if step_count >= max_nodes {
-                return true;
-            }
-        }
-        false
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::propagation::graph::ConstraintGraph;
+
+    #[test]
+    fn test_solve_empty_graph_does_not_panic() {
+        // Regression test: a graph with zero variables must not panic (division by zero
+        // in the destroy-phase modulo) and should return the trivially feasible solution.
+        let graph = ConstraintGraph::new();
+        let solver = LnsSolver::default();
+        let res = solver.solve(&graph, &SolverOptions::default());
+        assert!(matches!(res, SolveResult::Feasible { .. }));
     }
 }

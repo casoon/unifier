@@ -2,10 +2,13 @@
 //!
 //! Enforces `end(A) + min_delay <= start(B)`.
 //!
+//! Structurally equivalent to `end(A) <= start(B) + (-min_delay)`, so this is implemented as a
+//! thin wrapper around [`LessThanOrEqual`].
+//!
 //! Reference:
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 
-use crate::constraint::{Constraint, PropagationResult};
+use crate::constraint::{Constraint, LessThanOrEqual, PropagationResult};
 use crate::model::domain::Domain;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
@@ -14,10 +17,7 @@ use std::collections::HashMap;
 /// Precedence constraint enforcing `end(A) + min_delay <= start(B)`.
 #[derive(Debug, Clone)]
 pub struct Precedence {
-    end_a: VariableId,
-    start_b: VariableId,
-    min_delay: i64,
-    scope: [VariableId; 2],
+    inner: LessThanOrEqual,
 }
 
 impl Precedence {
@@ -26,13 +26,8 @@ impl Precedence {
     /// # Complexity
     /// Time & Space: O(1).
     pub fn new(interval_a: &Interval, interval_b: &Interval, min_delay: i64) -> Self {
-        let end_a = interval_a.end();
-        let start_b = interval_b.start();
         Self {
-            end_a,
-            start_b,
-            min_delay,
-            scope: [end_a, start_b],
+            inner: LessThanOrEqual::new(interval_a.end(), interval_b.start(), -min_delay),
         }
     }
 }
@@ -43,55 +38,14 @@ impl Constraint for Precedence {
     }
 
     fn scope(&self) -> &[VariableId] {
-        &self.scope
+        self.inner.scope()
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        match (assignment.get(&self.end_a), assignment.get(&self.start_b)) {
-            (Some(&ea), Some(&sb)) => ea + self.min_delay <= sb,
-            _ => true,
-        }
+        self.inner.is_satisfied(assignment)
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
-        let mut changed = false;
-
-        let max_sb = match domains.get(&self.start_b) {
-            Some(d) => match d.max() {
-                Some(max) => max,
-                None => return PropagationResult::Conflict,
-            },
-            None => return PropagationResult::Success { changed: false },
-        };
-
-        // end_a <= max_sb - min_delay
-        if let Some(da) = domains.get_mut(&self.end_a) {
-            if da.remove_above(max_sb - self.min_delay) {
-                changed = true;
-            }
-            if da.is_empty() {
-                return PropagationResult::Conflict;
-            }
-        }
-
-        let min_ea = match domains.get(&self.end_a) {
-            Some(d) => match d.min() {
-                Some(min) => min,
-                None => return PropagationResult::Conflict,
-            },
-            None => return PropagationResult::Success { changed: false },
-        };
-
-        // start_b >= min_ea + min_delay
-        if let Some(db) = domains.get_mut(&self.start_b) {
-            if db.remove_below(min_ea + self.min_delay) {
-                changed = true;
-            }
-            if db.is_empty() {
-                return PropagationResult::Conflict;
-            }
-        }
-
-        PropagationResult::Success { changed }
+        self.inner.propagate(domains)
     }
 }

@@ -10,7 +10,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ConstraintGraph;
 use crate::score::ScoreCalculator;
-use crate::solver::{SolveResult, SolverOptions};
+use crate::solver::{is_timed_out, SolveResult, SolverOptions};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -64,7 +64,7 @@ impl LocalSearchSolver {
         let start_time = Instant::now();
         let mut step_count = 0u64;
 
-        while !self.is_timed_out(options, start_time, step_count) {
+        while !is_timed_out(options, start_time, step_count) {
             step_count += 1;
 
             if best_score.is_feasible() && best_score.hard == 0 && best_score.soft == 0 {
@@ -146,29 +146,10 @@ impl LocalSearchSolver {
                 assignment: best_assignment,
                 score: best_score,
             }
-        } else if self.is_timed_out(options, start_time, step_count) {
+        } else if is_timed_out(options, start_time, step_count) {
             SolveResult::Timeout
         } else {
             SolveResult::Infeasible
         }
-    }
-
-    fn is_timed_out(&self, options: &SolverOptions, start_time: Instant, step_count: u64) -> bool {
-        if let Some(token) = &options.cancellation_token {
-            if token.is_cancelled() {
-                return true;
-            }
-        }
-        if let Some(limit) = options.time_limit {
-            if start_time.elapsed() >= limit {
-                return true;
-            }
-        }
-        if let Some(max_nodes) = options.max_nodes {
-            if step_count >= max_nodes {
-                return true;
-            }
-        }
-        false
     }
 }

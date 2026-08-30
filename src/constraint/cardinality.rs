@@ -11,6 +11,17 @@ use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 
+/// Counts how many variables in `scope` are assigned to `target_value`.
+///
+/// # Complexity
+/// Time: O(N) where N is `scope.len()`. Space: O(1).
+fn count_at_target(scope: &[VariableId], assignment: &HashMap<VariableId, i64>, target_value: i64) -> usize {
+    scope
+        .iter()
+        .filter(|v| assignment.get(v) == Some(&target_value))
+        .count()
+}
+
 /// Global constraint enforcing that exactly one variable in `scope` takes `target_value`.
 #[derive(Debug, Clone)]
 pub struct ExactlyOne {
@@ -41,12 +52,7 @@ impl Constraint for ExactlyOne {
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        let count = self
-            .scope
-            .iter()
-            .filter(|v| assignment.get(v) == Some(&self.target_value))
-            .count();
-        count == 1
+        count_at_target(&self.scope, assignment, self.target_value) == 1
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
@@ -136,12 +142,7 @@ impl Constraint for AtMost {
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        let count = self
-            .scope
-            .iter()
-            .filter(|v| assignment.get(v) == Some(&self.target_value))
-            .count();
-        count <= self.k
+        count_at_target(&self.scope, assignment, self.target_value) <= self.k
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
@@ -209,12 +210,7 @@ impl Constraint for AtLeast {
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        let count = self
-            .scope
-            .iter()
-            .filter(|v| assignment.get(v) == Some(&self.target_value))
-            .count();
-        count >= self.k
+        count_at_target(&self.scope, assignment, self.target_value) >= self.k
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
