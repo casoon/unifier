@@ -6,7 +6,7 @@
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 //! - Vilím, P. (2004). *O(n log n) filtering algorithms for unary resource constraint*. CPAIOR 2004, LNCS 3049.
 
-use crate::constraint::{Constraint, PropagationResult};
+use crate::constraint::{domain_bounds, prune, Constraint, PropagationResult};
 use crate::model::domain::Domain;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
@@ -94,19 +94,13 @@ impl Constraint for NoOverlap {
                 let t1 = &self.tasks[i];
                 let t2 = &self.tasks[j];
 
-                let (min1, max1) = match domains.get(&t1.start) {
-                    Some(d) => match (d.min(), d.max()) {
-                        (Some(min), Some(max)) => (min, max),
-                        _ => continue,
-                    },
+                let (min1, max1) = match domain_bounds(domains, t1.start) {
+                    Some(bounds) => bounds,
                     None => continue,
                 };
 
-                let (min2, max2) = match domains.get(&t2.start) {
-                    Some(d) => match (d.min(), d.max()) {
-                        (Some(min), Some(max)) => (min, max),
-                        _ => continue,
-                    },
+                let (min2, max2) = match domain_bounds(domains, t2.start) {
+                    Some(bounds) => bounds,
                     None => continue,
                 };
 
@@ -115,25 +109,15 @@ impl Constraint for NoOverlap {
 
                 // If t1 must end after t2 starts (end1_min > max2), then t1 must follow t2: start1 >= end2_min
                 if end1_min > max2 {
-                    if let Some(d1) = domains.get_mut(&t1.start) {
-                        if d1.remove_below(end2_min) {
-                            changed = true;
-                        }
-                        if d1.is_empty() {
-                            return PropagationResult::Conflict;
-                        }
+                    if let Some(result) = prune(domains, &mut changed, t1.start, |d| d.remove_below(end2_min)) {
+                        return result;
                     }
                 }
 
                 // If t2 must end after t1 starts (end2_min > max1), then t2 must follow t1: start2 >= end1_min
                 if end2_min > max1 {
-                    if let Some(d2) = domains.get_mut(&t2.start) {
-                        if d2.remove_below(end1_min) {
-                            changed = true;
-                        }
-                        if d2.is_empty() {
-                            return PropagationResult::Conflict;
-                        }
+                    if let Some(result) = prune(domains, &mut changed, t2.start, |d| d.remove_below(end1_min)) {
+                        return result;
                     }
                 }
             }

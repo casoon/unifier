@@ -62,3 +62,77 @@ pub trait Constraint: Debug + Send + Sync {
     /// Enforces arc/bounds consistency by pruning inconsistent values from variable domains.
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult;
 }
+
+/// Evaluates a binary comparator over two assigned variables.
+///
+/// Returns `true` if either variable is unassigned (a partial assignment does not yet
+/// violate a not-yet-fully-known comparison), matching the "partial assignment is not
+/// violating" convention used by binary comparison constraints.
+///
+/// # Complexity
+/// Time & Space: O(1).
+pub(crate) fn compare_assigned(
+    assignment: &HashMap<VariableId, i64>,
+    v1: VariableId,
+    v2: VariableId,
+    cmp: impl FnOnce(i64, i64) -> bool,
+) -> bool {
+    match (assignment.get(&v1), assignment.get(&v2)) {
+        (Some(&val1), Some(&val2)) => cmp(val1, val2),
+        _ => true,
+    }
+}
+
+/// Returns the `(min, max)` bounds of `var`'s domain for propagation, distinguishing an
+/// untracked variable from an already-empty domain.
+///
+/// Returns `Err(Success { changed: false })` if `var` is not present in `domains` (nothing to
+/// prune), or `Err(Conflict)` if its domain is already empty.
+///
+/// # Complexity
+/// Time & Space: O(1).
+pub(crate) fn require_bounds(
+    domains: &HashMap<VariableId, Domain>,
+    var: VariableId,
+) -> Result<(i64, i64), PropagationResult> {
+    match domains.get(&var) {
+        Some(d) => match (d.min(), d.max()) {
+            (Some(min), Some(max)) => Ok((min, max)),
+            _ => Err(PropagationResult::Conflict),
+        },
+        None => Err(PropagationResult::Success { changed: false }),
+    }
+}
+
+/// Returns the `(min, max)` bounds of `var`'s domain, or `None` if `var` is untracked or its
+/// domain is empty. Intended for propagation loops that skip rather than abort on a missing
+/// operand (e.g. global constraints iterating over a task list).
+///
+/// # Complexity
+/// Time & Space: O(1).
+pub(crate) fn domain_bounds(domains: &HashMap<VariableId, Domain>, var: VariableId) -> Option<(i64, i64)> {
+    let d = domains.get(&var)?;
+    Some((d.min()?, d.max()?))
+}
+
+/// Applies `narrow` to `var`'s domain, tracking whether it removed any values in `changed` and
+/// returning `Some(Conflict)` if the domain became empty. Returns `None` if `var` is untracked
+/// or narrowing did not exhaust the domain, so the caller can continue.
+///
+/// # Complexity
+/// Time & Space: O(1) plus the cost of `narrow`.
+pub(crate) fn prune(
+    domains: &mut HashMap<VariableId, Domain>,
+    changed: &mut bool,
+    var: VariableId,
+    narrow: impl FnOnce(&mut Domain) -> bool,
+) -> Option<PropagationResult> {
+    let d = domains.get_mut(&var)?;
+    if narrow(d) {
+        *changed = true;
+    }
+    if d.is_empty() {
+        return Some(PropagationResult::Conflict);
+    }
+    None
+}

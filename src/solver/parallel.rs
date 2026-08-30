@@ -48,6 +48,8 @@ impl ParallelSolver {
         thread::spawn(move || {
             let solver = BacktrackingSolver::new();
             let res = solver.solve(&graph1, &opts1);
+            // The receiver may already be dropped if `solve` returned after another worker's
+            // result was accepted first; a send failure here is expected, not an error.
             let _ = tx1.send(res);
         });
 
@@ -58,6 +60,7 @@ impl ParallelSolver {
         thread::spawn(move || {
             let solver = LocalSearchSolver::default();
             let res = solver.solve(&graph2, &opts2);
+            // See worker 1: an already-dropped receiver is an expected outcome, not an error.
             let _ = tx2.send(res);
         });
 
@@ -68,6 +71,7 @@ impl ParallelSolver {
         thread::spawn(move || {
             let solver = LnsSolver::default();
             let res = solver.solve(&graph3, &opts3);
+            // See worker 1: an already-dropped receiver is an expected outcome, not an error.
             let _ = tx3.send(res);
         });
 

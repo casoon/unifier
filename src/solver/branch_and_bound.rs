@@ -24,6 +24,14 @@ pub struct BranchAndBoundSolver {
     score_calculator: ScoreCalculator,
 }
 
+/// Mutable bookkeeping threaded through the recursive [`BranchAndBoundSolver::search`] descent,
+/// bundled to keep the recursive call's argument count manageable.
+struct SearchState<'a> {
+    nodes_count: &'a mut u64,
+    best_solution: &'a mut Option<HashMap<VariableId, i64>>,
+    best_score: &'a mut Option<HardSoftScore>,
+}
+
 impl BranchAndBoundSolver {
     /// Creates a new Branch and Bound solver.
     pub fn new() -> Self {
@@ -57,9 +65,11 @@ impl BranchAndBoundSolver {
             &mut assignment,
             options,
             start_time,
-            &mut nodes_count,
-            &mut best_solution,
-            &mut best_score,
+            &mut SearchState {
+                nodes_count: &mut nodes_count,
+                best_solution: &mut best_solution,
+                best_score: &mut best_score,
+            },
         );
 
         if let (Some(assignment), Some(score)) = (best_solution, best_score) {
@@ -71,7 +81,6 @@ impl BranchAndBoundSolver {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn search(
         &self,
         graph: &ConstraintGraph,
@@ -79,26 +88,24 @@ impl BranchAndBoundSolver {
         assignment: &mut HashMap<VariableId, i64>,
         options: &SolverOptions,
         start_time: Instant,
-        nodes_count: &mut u64,
-        best_solution: &mut Option<HashMap<VariableId, i64>>,
-        best_score: &mut Option<HardSoftScore>,
+        state: &mut SearchState,
     ) {
-        if is_timed_out(options, start_time, *nodes_count) {
+        if is_timed_out(options, start_time, *state.nodes_count) {
             return;
         }
 
-        *nodes_count += 1;
+        *state.nodes_count += 1;
 
         if assignment.len() == graph.variables().len() {
             let score = self.score_calculator.calculate_score(graph, assignment);
             if score.is_feasible() {
-                let is_better = match best_score {
+                let is_better = match state.best_score {
                     Some(b_score) => score > *b_score,
                     None => true,
                 };
                 if is_better {
-                    *best_score = Some(score);
-                    *best_solution = Some(assignment.clone());
+                    *state.best_score = Some(score);
+                    *state.best_solution = Some(assignment.clone());
                 }
             }
             return;
@@ -123,16 +130,7 @@ impl BranchAndBoundSolver {
             }
 
             if let PropagationResult::Success { .. } = self.propagator.propagate(graph, domains) {
-                self.search(
-                    graph,
-                    domains,
-                    assignment,
-                    options,
-                    start_time,
-                    nodes_count,
-                    best_solution,
-                    best_score,
-                );
+                self.search(graph, domains, assignment, options, start_time, state);
             }
 
             assignment.remove(&var_id);

@@ -8,7 +8,7 @@
 //!   Mathematical and Computer Modelling, 17(7), 57-73.
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
-use crate::constraint::{Constraint, PropagationResult};
+use crate::constraint::{domain_bounds, prune, Constraint, PropagationResult};
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -106,11 +106,8 @@ impl Constraint for Cumulative {
         // exceeding capacity
         for i in 0..self.tasks.len() {
             let t1 = &self.tasks[i];
-            let (min1, max1) = match domains.get(&t1.start) {
-                Some(d) => match (d.min(), d.max()) {
-                    (Some(min), Some(max)) => (min, max),
-                    _ => continue,
-                },
+            let (min1, max1) = match domain_bounds(domains, t1.start) {
+                Some(bounds) => bounds,
                 None => continue,
             };
 
@@ -135,13 +132,8 @@ impl Constraint for Cumulative {
 
                 if total_demand > self.capacity {
                     // t_check is infeasible for t1.start -> remove t_check from t1 domain
-                    if let Some(d1) = domains.get_mut(&t1.start) {
-                        if d1.remove(t_check) {
-                            changed = true;
-                        }
-                        if d1.is_empty() {
-                            return PropagationResult::Conflict;
-                        }
+                    if let Some(result) = prune(domains, &mut changed, t1.start, |d| d.remove(t_check)) {
+                        return result;
                     }
                 }
             }
