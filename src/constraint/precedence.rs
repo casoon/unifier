@@ -9,7 +9,7 @@
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 
 use crate::constraint::{Constraint, LessThanOrEqual, PropagationResult};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -45,7 +45,7 @@ impl Constraint for Precedence {
         self.inner.is_satisfied(assignment)
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         self.inner.propagate(domains)
     }
 }

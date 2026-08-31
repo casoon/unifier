@@ -7,7 +7,7 @@
 //! - Bitner, J. R., & Reingold, E. M. (1975). *Backtrack programming techniques*. CACM, 18(11), 651-656.
 
 use crate::constraint::PropagationResult;
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
@@ -40,7 +40,7 @@ impl BacktrackingSolver {
     /// Time: O(d^n) worst-case search tree size, mitigated by MRV variable ordering and AC-3 domain pruning.
     /// Space: O(n * d) recursion stack depth and domain snapshot storage.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
-        let mut current_domains = graph.domains().clone();
+        let mut current_domains = TrailedDomains::new(graph.domains().clone());
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
@@ -80,7 +80,7 @@ impl BacktrackingSolver {
     fn backtrack(
         &self,
         graph: &ConstraintGraph,
-        domains: &mut HashMap<VariableId, Domain>,
+        domains: &mut TrailedDomains,
         assignment: &mut HashMap<VariableId, i64>,
         options: &SolverOptions,
         start_time: Instant,
@@ -110,8 +110,8 @@ impl BacktrackingSolver {
         };
 
         for val in candidate_values {
-            // Snapshot domains prior to assignment
-            let domain_snapshot = domains.clone();
+            // Checkpoint the domain trail prior to assignment (O(1), no full clone).
+            let checkpoint = domains.checkpoint();
 
             // Assign value
             assignment.insert(var_id, val);
@@ -126,9 +126,9 @@ impl BacktrackingSolver {
                 return true;
             }
 
-            // Backtrack: restore state
+            // Backtrack: restore state (only the domains actually touched since checkpoint).
             assignment.remove(&var_id);
-            *domains = domain_snapshot;
+            domains.undo_to(checkpoint);
         }
 
         false

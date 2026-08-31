@@ -8,7 +8,7 @@
 //! - Clausen, J. (1999). *Branch and Bound Algorithms - Principles and Examples*. Parallel Computing in Optimization.
 
 use crate::constraint::PropagationResult;
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
@@ -57,7 +57,7 @@ impl BranchAndBoundSolver {
     /// and MRV variable ordering.
     /// Space: O(n * d) recursion stack depth.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
-        let mut current_domains = graph.domains().clone();
+        let mut current_domains = TrailedDomains::new(graph.domains().clone());
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
@@ -122,7 +122,7 @@ impl BranchAndBoundSolver {
     fn search(
         &self,
         graph: &ConstraintGraph,
-        domains: &mut HashMap<VariableId, Domain>,
+        domains: &mut TrailedDomains,
         assignment: &mut HashMap<VariableId, i64>,
         options: &SolverOptions,
         start_time: Instant,
@@ -172,7 +172,7 @@ impl BranchAndBoundSolver {
 
         let mut exhaustive = true;
         for val in candidate_values {
-            let domain_snapshot = domains.clone();
+            let checkpoint = domains.checkpoint();
 
             assignment.insert(var_id, val);
             if let Some(d) = domains.get_mut(&var_id) {
@@ -184,7 +184,7 @@ impl BranchAndBoundSolver {
             }
 
             assignment.remove(&var_id);
-            *domains = domain_snapshot;
+            domains.undo_to(checkpoint);
         }
 
         exhaustive
@@ -195,6 +195,7 @@ impl BranchAndBoundSolver {
 mod tests {
     use super::*;
     use crate::constraint::ExactlyOne;
+    use crate::model::domain::Domain;
     use crate::score::WeightedSum;
     use std::sync::Arc;
 

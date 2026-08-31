@@ -7,7 +7,7 @@
 //! - Vilím, P. (2004). *O(n log n) filtering algorithms for unary resource constraint*. CPAIOR 2004, LNCS 3049.
 
 use crate::constraint::{Constraint, PropagationResult, domain_bounds, duration_as_i64, prune};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -83,7 +83,7 @@ impl Constraint for NoOverlap {
         true
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
         let n = self.tasks.len();
 

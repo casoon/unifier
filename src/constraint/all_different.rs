@@ -5,7 +5,7 @@
 //! - van Hoeve, W. J. (2001). *The AllDifferent constraint: A survey*. arXiv:cs/0105015.
 
 use crate::constraint::{Constraint, PropagationResult};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::{HashMap, HashSet};
 
@@ -48,7 +48,7 @@ impl Constraint for AllDifferent {
         true
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         // Collect all fixed values (singleton domains)

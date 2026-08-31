@@ -9,7 +9,7 @@
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
 use crate::constraint::{Constraint, PropagationResult, domain_bounds, duration_as_i64, prune};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 
@@ -103,7 +103,7 @@ impl Constraint for Cumulative {
         Ok(())
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         // Safety net for graphs built without `ConstraintGraph::validate` (which already rejects

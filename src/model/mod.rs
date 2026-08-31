@@ -8,7 +8,7 @@ pub mod resource;
 pub mod variable;
 
 pub use activity::{Activity, ActivityId, ResourceDemand};
-pub use domain::Domain;
+pub use domain::{Domain, TrailedDomains};
 pub use group::{Group, GroupId};
 pub use interval::{DurationSpec, Interval};
 pub use resource::{Resource, ResourceId};

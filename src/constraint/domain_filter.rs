@@ -4,7 +4,7 @@
 //! - Rossi, F., van Beek, P., & Walsh, T. (2006). *Handbook of Constraint Programming*. Elsevier.
 
 use crate::constraint::{Constraint, PropagationResult};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::{HashMap, HashSet};
 
@@ -47,7 +47,7 @@ impl Constraint for AllowedValues {
         }
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         if let Some(domain) = domains.get_mut(&self.var) {
@@ -105,7 +105,7 @@ impl Constraint for ForbiddenValues {
         }
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         if let Some(domain) = domains.get_mut(&self.var) {

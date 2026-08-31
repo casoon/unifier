@@ -7,7 +7,7 @@
 //! - Régin, J. C. (1996). *Generalized arc consistency for global cardinality constraint*. AAAI-96, 209-215.
 
 use crate::constraint::{Constraint, PropagationResult};
-use crate::model::domain::Domain;
+use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 
@@ -95,7 +95,7 @@ impl Constraint for ExactlyOne {
         fixed <= 1 && possible >= 1
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
         let mut fixed_target_var = None;
         let mut possible_count = 0;
@@ -189,7 +189,7 @@ impl Constraint for AtMost {
         count_at_target(&self.scope, assignment, self.target_value) <= self.k
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
         let mut fixed_count = 0;
 
@@ -274,7 +274,7 @@ impl Constraint for AtLeast {
         possible >= self.k
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
         let mut possible_vars = Vec::new();
 

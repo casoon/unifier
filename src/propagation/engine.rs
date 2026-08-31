@@ -8,8 +8,7 @@
 //! - Schulte, C., & Stuckey, P. J. (2008). *Efficient constraint propagation engines*. ACM TOPLAS, 31(1), 1-43.
 
 use crate::constraint::PropagationResult;
-use crate::model::domain::Domain;
-use crate::model::variable::VariableId;
+use crate::model::domain::TrailedDomains;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId};
 use std::collections::{HashMap, VecDeque};
 
@@ -31,7 +30,7 @@ impl PropagationEngine {
     pub fn propagate(
         &self,
         graph: &ConstraintGraph,
-        domains: &mut HashMap<VariableId, Domain>,
+        domains: &mut TrailedDomains,
     ) -> PropagationResult {
         let mut queue: VecDeque<ConstraintId> = (0..graph.constraints().len())
             .map(|i| ConstraintId(i as u32))

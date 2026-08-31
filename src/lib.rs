@@ -26,7 +26,9 @@ pub use constraint::{
     ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Precedence, TaskDemand,
 };
 pub use dsl::ModelBuilder;
-pub use model::{Activity, Domain, Group, Interval, Resource, Variable, VariableId};
+pub use model::{
+    Activity, Domain, Group, Interval, Resource, TrailedDomains, Variable, VariableId,
+};
 pub use propagation::{ConstraintGraph, ModelError, PropagationEngine, ValidatedGraph};
 pub use score::{HardSoftScore, Objective, ScoreCalculator, WeightedSum};
 pub use solver::{

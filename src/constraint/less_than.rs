@@ -4,7 +4,7 @@
 //! - Dechter, R. (2003). *Constraint Processing*. Morgan Kaufmann.
 
 use crate::constraint::{Constraint, PropagationResult, compare_assigned, prune, require_bounds};
-use crate::model::domain::Domain;
+use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 
@@ -47,7 +47,7 @@ impl Constraint for LessThanOrEqual {
         })
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         let (_, max2) = match require_bounds(domains, self.v2) {

@@ -24,7 +24,7 @@ pub use no_overlap::NoOverlap;
 pub use not_equal::NotEqual;
 pub use precedence::Precedence;
 
-use crate::model::domain::Domain;
+use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -60,7 +60,11 @@ pub trait Constraint: Debug + Send + Sync {
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool;
 
     /// Enforces arc/bounds consistency by pruning inconsistent values from variable domains.
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult;
+    ///
+    /// `domains` is a [`TrailedDomains`], not a bare `HashMap`: mutations made through
+    /// [`TrailedDomains::get_mut`] are recorded so the search solvers can undo a node in
+    /// `O(changed)` instead of cloning the full domain map at every node.
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult;
 
     /// Validates the constraint's own parameters independent of any assignment or domain state.
     ///
@@ -161,7 +165,7 @@ pub(crate) fn domain_bounds(
 /// # Complexity
 /// Time & Space: O(1) plus the cost of `narrow`.
 pub(crate) fn prune(
-    domains: &mut HashMap<VariableId, Domain>,
+    domains: &mut TrailedDomains,
     changed: &mut bool,
     var: VariableId,
     narrow: impl FnOnce(&mut Domain) -> bool,

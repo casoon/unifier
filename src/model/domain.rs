@@ -7,7 +7,8 @@
 //! - Schulte, C., & Stuckey, P. J. (2008). *Efficient constraint propagation engines*. ACM TOPLAS, 31(1), 1-43.
 //! - Briggs, P., & Torczon, L. (1993). *An efficient architecture for sparse sets*. ACM SIGPLAN Notices, 28(3), 115-121.
 
-use std::collections::BTreeSet;
+use crate::model::variable::VariableId;
+use std::collections::{BTreeSet, HashMap};
 
 /// Representation of possible integer values for a decision variable.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,6 +256,86 @@ impl Domain {
     }
 }
 
+/// A `HashMap<VariableId, Domain>` that records the pre-mutation value of every domain accessed
+/// mutably, so a search node can be undone in `O(changed)` by restoring only the domains that
+/// were actually touched — instead of an `O(N)` full-map clone of all `N` domains at every node.
+///
+/// Reference:
+/// - Schulte, C. (1999). *Comparing trailing and copying for constraint programming*. ICLP 1999,
+///   275-289. (Trailing vs. copying as the two classical state-restoration strategies for CSP
+///   search; this type implements trailing.)
+///
+/// Read access is available via [`std::ops::Deref`] to the underlying `HashMap`, so existing
+/// read-only call sites (`domains.get(&var)`, `domains.contains_key(&var)`, ...) work unchanged.
+/// There is deliberately no `DerefMut`: mutation must go through [`Self::get_mut`], the only way
+/// to record an undo entry, so [`Self::undo_to`] can never miss a change.
+#[derive(Debug, Clone, Default)]
+pub struct TrailedDomains {
+    domains: HashMap<VariableId, Domain>,
+    trail: Vec<(VariableId, Domain)>,
+}
+
+impl TrailedDomains {
+    /// Wraps `domains` with an empty trail.
+    ///
+    /// # Complexity
+    /// Time & Space: O(1) (takes ownership; no copy).
+    pub fn new(domains: HashMap<VariableId, Domain>) -> Self {
+        Self {
+            domains,
+            trail: Vec::new(),
+        }
+    }
+
+    /// Returns a mutable reference to `var`'s domain, first recording its current value on the
+    /// trail so [`Self::undo_to`] can restore it later. Returns `None` if `var` is untracked.
+    ///
+    /// Shadows `HashMap::get_mut` (an inherent method takes priority over the `Deref` target's),
+    /// so existing `domains.get_mut(&var)` call sites route through here automatically.
+    ///
+    /// # Complexity
+    /// Time: O(1) amortized, plus the cost of cloning the domain being recorded (O(1) for
+    /// `Domain::Range`, O(D) for `Domain::Explicit`).
+    pub fn get_mut(&mut self, var: &VariableId) -> Option<&mut Domain> {
+        if let Some(current) = self.domains.get(var) {
+            self.trail.push((*var, current.clone()));
+        }
+        self.domains.get_mut(var)
+    }
+
+    /// Returns a checkpoint identifying the current trail position, to later pass to
+    /// [`Self::undo_to`].
+    ///
+    /// # Complexity
+    /// Time & Space: O(1).
+    pub fn checkpoint(&self) -> usize {
+        self.trail.len()
+    }
+
+    /// Restores every domain mutated since `checkpoint`, in reverse order, back to its
+    /// pre-mutation value.
+    ///
+    /// # Complexity
+    /// Time: O(K) where K is the number of mutations recorded since `checkpoint` (not O(N)).
+    pub fn undo_to(&mut self, checkpoint: usize) {
+        while self.trail.len() > checkpoint {
+            let (var, previous) = self
+                .trail
+                .pop()
+                .expect("trail.len() > checkpoint implies non-empty");
+            self.domains.insert(var, previous);
+        }
+    }
+}
+
+impl std::ops::Deref for TrailedDomains {
+    type Target = HashMap<VariableId, Domain>;
+
+    fn deref(&self) -> &HashMap<VariableId, Domain> {
+        &self.domains
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,5 +400,78 @@ mod tests {
         let mut d = Domain::from_values(vec![1, 2, i64::MAX]);
         assert!(!d.remove_above(i64::MAX));
         assert_eq!(d.values(), vec![1, 2, i64::MAX]);
+    }
+
+    #[test]
+    fn test_trailed_domains_undo_restores_single_mutation() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let checkpoint = trailed.checkpoint();
+        trailed.get_mut(&v).unwrap().remove_above(5);
+        assert_eq!(trailed.get(&v).unwrap().max(), Some(5));
+
+        trailed.undo_to(checkpoint);
+        assert_eq!(trailed.get(&v).unwrap(), &Domain::range(1, 10));
+    }
+
+    #[test]
+    fn test_trailed_domains_undo_restores_multiple_mutations_in_order() {
+        // Two variables mutated, then a third narrowing on the first: undo must reconstruct the
+        // exact original state, not just the state before the last mutation.
+        let mut map = HashMap::new();
+        let x = VariableId(0);
+        let y = VariableId(1);
+        map.insert(x, Domain::range(1, 10));
+        map.insert(y, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let checkpoint = trailed.checkpoint();
+        trailed.get_mut(&x).unwrap().remove_above(8);
+        trailed.get_mut(&y).unwrap().remove_below(3);
+        trailed.get_mut(&x).unwrap().remove_below(2);
+        assert_eq!(trailed.get(&x).unwrap(), &Domain::range(2, 8));
+        assert_eq!(trailed.get(&y).unwrap(), &Domain::range(3, 10));
+
+        trailed.undo_to(checkpoint);
+        assert_eq!(trailed.get(&x).unwrap(), &Domain::range(1, 10));
+        assert_eq!(trailed.get(&y).unwrap(), &Domain::range(1, 10));
+    }
+
+    #[test]
+    fn test_trailed_domains_nested_checkpoints() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let outer = trailed.checkpoint();
+        trailed.get_mut(&v).unwrap().remove_above(8);
+        let inner = trailed.checkpoint();
+        trailed.get_mut(&v).unwrap().remove_above(5);
+        assert_eq!(trailed.get(&v).unwrap().max(), Some(5));
+
+        // Undo only the inner mutation.
+        trailed.undo_to(inner);
+        assert_eq!(trailed.get(&v).unwrap().max(), Some(8));
+
+        // Undo the rest.
+        trailed.undo_to(outer);
+        assert_eq!(trailed.get(&v).unwrap(), &Domain::range(1, 10));
+    }
+
+    #[test]
+    fn test_trailed_domains_deref_read_access() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let trailed = TrailedDomains::new(map);
+
+        // Deref makes read-only HashMap methods available directly.
+        assert!(trailed.contains_key(&v));
+        assert_eq!(trailed.len(), 1);
+        assert_eq!(trailed.get(&v), Some(&Domain::range(1, 10)));
     }
 }

@@ -4,7 +4,7 @@
 //! - Dechter, R. (2003). *Constraint Processing*. Morgan Kaufmann.
 
 use crate::constraint::{Constraint, PropagationResult, compare_assigned, prune};
-use crate::model::domain::Domain;
+use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
 
@@ -57,7 +57,7 @@ impl Constraint for NotEqual {
         })
     }
 
-    fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
+    fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {
         let mut changed = false;
 
         // If v1 is assigned (len == 1), remove (val1 - offset) from v2
