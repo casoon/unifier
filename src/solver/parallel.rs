@@ -10,11 +10,12 @@
 use crate::propagation::graph::ConstraintGraph;
 use crate::solver::backtracking::BacktrackingSolver;
 use crate::solver::cancellation::CancellationToken;
-use crate::solver::local_search::LocalSearchSolver;
 use crate::solver::lns::LnsSolver;
-use crate::solver::{SolveResult, SolverOptions};
+use crate::solver::local_search::LocalSearchSolver;
+use crate::solver::{AbortReason, SolveResult, SolverOptions};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 /// Parallel portfolio search manager.
 #[derive(Debug, Default)]
@@ -28,18 +29,24 @@ impl ParallelSolver {
 
     /// Runs parallel portfolio search over `graph` using concurrent solver threads.
     ///
+    /// Reports `Infeasible` only if a worker actually proved it; if every worker merely ran out
+    /// of time, budget, or was cancelled without finding a feasible assignment, this returns
+    /// `Aborted` instead. Workers are coordinated via a solver-owned cancellation token, so a run
+    /// never mutates a token the caller supplied via `options.cancellation_token` — that token is
+    /// only observed, never cancelled by this solver.
+    ///
     /// # Complexity
     /// Time: Min time across all parallel search strategies.
     /// Space: O(P * N * D) where P is thread count.
     pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
         let (tx, rx) = mpsc::channel();
-        let cancel_token = options
-            .cancellation_token
-            .clone()
-            .unwrap_or_else(CancellationToken::new);
+
+        // Coordinates worker shutdown internally; the caller's own token (if any) is observed
+        // below but never mutated, so it stays reusable for the caller's other operations.
+        let internal_token = CancellationToken::new();
 
         let mut thread_options = options.clone();
-        thread_options.cancellation_token = Some(cancel_token.clone());
+        thread_options.cancellation_token = Some(internal_token.clone());
 
         // Worker 1: Backtracking solver
         let graph1 = graph.clone();
@@ -75,25 +82,48 @@ impl ParallelSolver {
             let _ = tx3.send(res);
         });
 
-        // Wait for first non-timeout result or best solution
-        let mut best_result = SolveResult::Infeasible;
+        // Wait for the first feasible result, or until every worker has reported.
         let mut responses_count = 0;
+        let mut proven_infeasible = false;
 
         while responses_count < 3 {
-            if let Ok(result) = rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            if let Ok(result) = rx.recv_timeout(Duration::from_millis(50)) {
                 responses_count += 1;
-                if let SolveResult::Feasible { .. } = &result {
-                    cancel_token.cancel();
-                    return result;
-                } else if result != SolveResult::Timeout {
-                    best_result = result;
+                match result {
+                    SolveResult::Feasible { .. } => {
+                        internal_token.cancel();
+                        return result;
+                    }
+                    SolveResult::Infeasible => proven_infeasible = true,
+                    SolveResult::Aborted { .. } => {}
                 }
-            } else if cancel_token.is_cancelled() {
+            } else if options
+                .cancellation_token
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+            {
                 break;
             }
         }
 
-        cancel_token.cancel();
-        best_result
+        internal_token.cancel();
+
+        if proven_infeasible {
+            // At least one complete solver (Backtracking, or LNS/Local Search's own immediate
+            // empty-domain check) exhaustively proved unsatisfiability.
+            SolveResult::Infeasible
+        } else if options
+            .cancellation_token
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            SolveResult::Aborted {
+                reason: AbortReason::Cancelled,
+            }
+        } else {
+            SolveResult::Aborted {
+                reason: AbortReason::Timeout,
+            }
+        }
     }
 }

@@ -6,7 +6,7 @@
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 //! - Vilím, P. (2004). *O(n log n) filtering algorithms for unary resource constraint*. CPAIOR 2004, LNCS 3049.
 
-use crate::constraint::{domain_bounds, prune, Constraint, PropagationResult};
+use crate::constraint::{Constraint, PropagationResult, domain_bounds, prune};
 use crate::model::domain::Domain;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
@@ -67,7 +67,9 @@ impl Constraint for NoOverlap {
                 let t1 = &self.tasks[i];
                 let t2 = &self.tasks[j];
 
-                if let (Some(&s1), Some(&s2)) = (assignment.get(&t1.start), assignment.get(&t2.start)) {
+                if let (Some(&s1), Some(&s2)) =
+                    (assignment.get(&t1.start), assignment.get(&t2.start))
+                {
                     let end1 = s1 + t1.duration as i64;
                     let end2 = s2 + t2.duration as i64;
 
@@ -108,17 +110,21 @@ impl Constraint for NoOverlap {
                 let end2_min = min2 + t2.duration as i64;
 
                 // If t1 must end after t2 starts (end1_min > max2), then t1 must follow t2: start1 >= end2_min
-                if end1_min > max2 {
-                    if let Some(result) = prune(domains, &mut changed, t1.start, |d| d.remove_below(end2_min)) {
-                        return result;
-                    }
+                if end1_min > max2
+                    && let Some(result) = prune(domains, &mut changed, t1.start, |d| {
+                        d.remove_below(end2_min)
+                    })
+                {
+                    return result;
                 }
 
                 // If t2 must end after t1 starts (end2_min > max1), then t2 must follow t1: start2 >= end1_min
-                if end2_min > max1 {
-                    if let Some(result) = prune(domains, &mut changed, t2.start, |d| d.remove_below(end1_min)) {
-                        return result;
-                    }
+                if end2_min > max1
+                    && let Some(result) = prune(domains, &mut changed, t2.start, |d| {
+                        d.remove_below(end1_min)
+                    })
+                {
+                    return result;
                 }
             }
         }

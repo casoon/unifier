@@ -54,7 +54,10 @@ impl Activity {
     ///
     /// Time complexity: O(1) amortized.
     pub fn require_resource(&mut self, resource_id: ResourceId, demand: u32) {
-        self.demands.push(ResourceDemand { resource_id, demand });
+        self.demands.push(ResourceDemand {
+            resource_id,
+            demand,
+        });
     }
 
     /// Returns the activity identifier.

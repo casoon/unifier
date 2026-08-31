@@ -11,7 +11,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ConstraintGraph;
 use crate::solver::backtracking::BacktrackingSolver;
-use crate::solver::{is_timed_out, SolveResult, SolverOptions};
+use crate::solver::{SolveResult, SolverOptions, check_abort};
 use std::time::Instant;
 
 /// Large Neighborhood Search solver.
@@ -48,7 +48,9 @@ impl LnsSolver {
         // Step 1: Obtain initial solution via Backtracking solver
         let initial_res = self.repair_solver.solve(graph, options);
         let (mut current_assignment, current_score) = match initial_res {
-            SolveResult::Feasible { assignment, score } => (assignment, score),
+            SolveResult::Feasible {
+                assignment, score, ..
+            } => (assignment, score),
             other => return other,
         };
 
@@ -64,11 +66,12 @@ impl LnsSolver {
             return SolveResult::Feasible {
                 assignment: best_assignment,
                 score: best_score,
+                proven_optimal: false,
             };
         }
         let n_destroy = ((vars.len() as f64) * self.destroy_fraction).max(1.0) as usize;
 
-        while !is_timed_out(options, start_time, lns_step) {
+        while check_abort(options, start_time, lns_step).is_none() {
             lns_step += 1;
 
             // Destroy phase: Freeze (1 - destroy_fraction) variables, unassign the remaining
@@ -80,10 +83,10 @@ impl LnsSolver {
                 let v = vars[(i + destroy_offset) % vars.len()];
                 if i >= n_destroy {
                     // Freeze variable v to its current assigned value
-                    if let Some(&assigned_val) = current_assignment.get(&v) {
-                        if let Some(d) = sub_domains.get_mut(&v) {
-                            d.assign(assigned_val);
-                        }
+                    if let Some(&assigned_val) = current_assignment.get(&v)
+                        && let Some(d) = sub_domains.get_mut(&v)
+                    {
+                        d.assign(assigned_val);
                     }
                 }
             }
@@ -92,24 +95,29 @@ impl LnsSolver {
 
             // Repair phase: Solve sub-problem via Backtracking solver
             let repair_options = SolverOptions {
-                time_limit: options.time_limit.map(|t| t.saturating_sub(start_time.elapsed())),
+                time_limit: options
+                    .time_limit
+                    .map(|t| t.saturating_sub(start_time.elapsed())),
                 max_nodes: Some(500),
                 cancellation_token: options.cancellation_token.clone(),
             };
 
             let repair_res = self.repair_solver.solve(&sub_graph, &repair_options);
-            if let SolveResult::Feasible { assignment, score } = repair_res {
-                if score > best_score {
-                    best_score = score;
-                    best_assignment = assignment.clone();
-                    current_assignment = assignment;
-                }
+            if let SolveResult::Feasible {
+                assignment, score, ..
+            } = repair_res
+                && score > best_score
+            {
+                best_score = score;
+                best_assignment = assignment.clone();
+                current_assignment = assignment;
             }
         }
 
         SolveResult::Feasible {
             assignment: best_assignment,
             score: best_score,
+            proven_optimal: false,
         }
     }
 }

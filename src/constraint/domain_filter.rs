@@ -53,10 +53,8 @@ impl Constraint for AllowedValues {
         if let Some(domain) = domains.get_mut(&self.var) {
             let current_values = domain.values();
             for val in current_values {
-                if !self.allowed.contains(&val) {
-                    if domain.remove(val) {
-                        changed = true;
-                    }
+                if !self.allowed.contains(&val) && domain.remove(val) {
+                    changed = true;
                 }
             }
             if domain.is_empty() {

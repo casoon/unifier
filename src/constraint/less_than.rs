@@ -3,7 +3,7 @@
 //! Reference:
 //! - Dechter, R. (2003). *Constraint Processing*. Morgan Kaufmann.
 
-use crate::constraint::{compare_assigned, prune, require_bounds, Constraint, PropagationResult};
+use crate::constraint::{Constraint, PropagationResult, compare_assigned, prune, require_bounds};
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -42,7 +42,9 @@ impl Constraint for LessThanOrEqual {
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        compare_assigned(assignment, self.v1, self.v2, |val1, val2| val1 <= val2 + self.offset)
+        compare_assigned(assignment, self.v1, self.v2, |val1, val2| {
+            val1 <= val2 + self.offset
+        })
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
@@ -54,7 +56,9 @@ impl Constraint for LessThanOrEqual {
         };
 
         // v1 <= max2 + offset -> prune v1 above (max2 + offset)
-        if let Some(result) = prune(domains, &mut changed, self.v1, |d| d.remove_above(max2 + self.offset)) {
+        if let Some(result) = prune(domains, &mut changed, self.v1, |d| {
+            d.remove_above(max2 + self.offset)
+        }) {
             return result;
         }
 
@@ -64,7 +68,9 @@ impl Constraint for LessThanOrEqual {
         };
 
         // v2 >= min1 - offset -> prune v2 below (min1 - offset)
-        if let Some(result) = prune(domains, &mut changed, self.v2, |d| d.remove_below(min1 - self.offset)) {
+        if let Some(result) = prune(domains, &mut changed, self.v2, |d| {
+            d.remove_below(min1 - self.offset)
+        }) {
             return result;
         }
 

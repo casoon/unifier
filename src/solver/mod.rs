@@ -5,16 +5,16 @@
 pub mod backtracking;
 pub mod branch_and_bound;
 pub mod cancellation;
-pub mod local_search;
 pub mod lns;
+pub mod local_search;
 pub mod parallel;
 pub mod pathwise_bridge;
 
 pub use backtracking::BacktrackingSolver;
 pub use branch_and_bound::BranchAndBoundSolver;
 pub use cancellation::{CancellationToken, SearchStatistics};
-pub use local_search::LocalSearchSolver;
 pub use lns::LnsSolver;
+pub use local_search::LocalSearchSolver;
 pub use parallel::ParallelSolver;
 pub use pathwise_bridge::UnifierProblemAdapter;
 
@@ -46,43 +46,71 @@ impl Default for SolverOptions {
     }
 }
 
+/// Why a search run stopped without reaching a conclusive result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbortReason {
+    /// The caller's [`CancellationToken`] was cancelled.
+    Cancelled,
+    /// `SolverOptions::time_limit` elapsed.
+    Timeout,
+    /// `SolverOptions::max_nodes` was reached.
+    NodeLimit,
+    /// A local-search-style solver reached a local optimum with no improving, non-tabu move
+    /// available. This does not prove infeasibility or optimality.
+    LocalOptimum,
+}
+
 /// Result returned by a solver run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SolveResult {
     /// A valid assignment satisfying all hard constraints was found.
+    ///
+    /// `proven_optimal` is `true` only if the solver established that no better `score` is
+    /// reachable (e.g. [`BranchAndBoundSolver`] exhausted or bound-pruned the full search
+    /// space). It is always `false` for solvers that cannot make that guarantee (Backtracking
+    /// stops at the first feasible assignment; Local Search and LNS are incomplete heuristics) —
+    /// in that case `assignment` is the best incumbent found before the search ended.
     Feasible {
         assignment: HashMap<VariableId, i64>,
         score: HardSoftScore,
+        proven_optimal: bool,
     },
-    /// The constraint network is provably unsatisfiable.
+    /// The constraint network is provably unsatisfiable: the full search space was exhausted
+    /// without finding any feasible assignment.
     Infeasible,
-    /// Solver stopped due to time limit or node limit.
-    Timeout,
+    /// The search stopped (see `reason`) before finding a feasible assignment and before the
+    /// search space was exhausted, so neither feasibility nor infeasibility could be established.
+    Aborted { reason: AbortReason },
 }
 
-/// Checks whether a search run has exceeded its cancellation token, time limit, or node budget.
+/// Checks whether a search run has exceeded its cancellation token, time limit, or node budget,
+/// returning the specific reason so callers can report it via [`SolveResult::Aborted`].
 ///
 /// Shared by all search-based solvers (Backtracking, Branch & Bound, Local Search, LNS).
 ///
 /// # Complexity
 /// Time & Space: O(1).
-pub(crate) fn is_timed_out(options: &SolverOptions, start_time: Instant, step_count: u64) -> bool {
-    if let Some(token) = &options.cancellation_token {
-        if token.is_cancelled() {
-            return true;
-        }
+pub(crate) fn check_abort(
+    options: &SolverOptions,
+    start_time: Instant,
+    step_count: u64,
+) -> Option<AbortReason> {
+    if let Some(token) = &options.cancellation_token
+        && token.is_cancelled()
+    {
+        return Some(AbortReason::Cancelled);
     }
-    if let Some(limit) = options.time_limit {
-        if start_time.elapsed() >= limit {
-            return true;
-        }
+    if let Some(limit) = options.time_limit
+        && start_time.elapsed() >= limit
+    {
+        return Some(AbortReason::Timeout);
     }
-    if let Some(max_nodes) = options.max_nodes {
-        if step_count >= max_nodes {
-            return true;
-        }
+    if let Some(max_nodes) = options.max_nodes
+        && step_count >= max_nodes
+    {
+        return Some(AbortReason::NodeLimit);
     }
-    false
+    None
 }
 
 /// Minimum Remaining Values (MRV / Fail-First) heuristic selecting the unassigned variable
@@ -101,13 +129,13 @@ pub(crate) fn select_mrv_variable(
     let mut min_domain_size = usize::MAX;
 
     for &var_id in graph.variables().keys() {
-        if !assignment.contains_key(&var_id) {
-            if let Some(domain) = domains.get(&var_id) {
-                let len = domain.len();
-                if len < min_domain_size {
-                    min_domain_size = len;
-                    best_var = Some(var_id);
-                }
+        if !assignment.contains_key(&var_id)
+            && let Some(domain) = domains.get(&var_id)
+        {
+            let len = domain.len();
+            if len < min_domain_size {
+                min_domain_size = len;
+                best_var = Some(var_id);
             }
         }
     }

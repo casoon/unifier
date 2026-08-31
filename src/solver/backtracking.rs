@@ -12,7 +12,7 @@ use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::ConstraintGraph;
 use crate::score::ScoreCalculator;
-use crate::solver::{is_timed_out, select_mrv_variable, SolveResult, SolverOptions};
+use crate::solver::{SolveResult, SolverOptions, check_abort, select_mrv_variable};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -44,7 +44,8 @@ impl BacktrackingSolver {
         let mut nodes_count = 0u64;
 
         // Initial AC-3 propagation over full graph
-        if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains) {
+        if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains)
+        {
             return SolveResult::Infeasible;
         }
 
@@ -57,9 +58,13 @@ impl BacktrackingSolver {
             &mut nodes_count,
         ) {
             let score = self.score_calculator.calculate_score(graph, &assignment);
-            SolveResult::Feasible { assignment, score }
-        } else if is_timed_out(options, start_time, nodes_count) {
-            SolveResult::Timeout
+            SolveResult::Feasible {
+                assignment,
+                score,
+                proven_optimal: false,
+            }
+        } else if let Some(reason) = check_abort(options, start_time, nodes_count) {
+            SolveResult::Aborted { reason }
         } else {
             SolveResult::Infeasible
         }
@@ -74,7 +79,7 @@ impl BacktrackingSolver {
         start_time: Instant,
         nodes_count: &mut u64,
     ) -> bool {
-        if is_timed_out(options, start_time, *nodes_count) {
+        if check_abort(options, start_time, *nodes_count).is_some() {
             return false;
         }
 
@@ -108,10 +113,10 @@ impl BacktrackingSolver {
             }
 
             // Propagate constraints
-            if let PropagationResult::Success { .. } = self.propagator.propagate(graph, domains) {
-                if self.backtrack(graph, domains, assignment, options, start_time, nodes_count) {
-                    return true;
-                }
+            if let PropagationResult::Success { .. } = self.propagator.propagate(graph, domains)
+                && self.backtrack(graph, domains, assignment, options, start_time, nodes_count)
+            {
+                return true;
             }
 
             // Backtrack: restore state
@@ -147,7 +152,9 @@ mod tests {
         let res = solver.solve(&graph, &SolverOptions::default());
 
         match res {
-            SolveResult::Feasible { assignment, score } => {
+            SolveResult::Feasible {
+                assignment, score, ..
+            } => {
                 assert!(score.is_feasible());
                 let x_val = assignment.get(&v1).copied().unwrap();
                 let y_val = assignment.get(&v2).copied().unwrap();
@@ -159,6 +166,7 @@ mod tests {
 
     #[test]
     fn test_solve_nqueens_4() {
+        // Board: `vars[row]` holds the column of the queen in that row.
         let mut graph = ConstraintGraph::new();
         let vars: Vec<VariableId> = (0..4).map(VariableId).collect();
 
@@ -166,21 +174,39 @@ mod tests {
             graph.add_variable(Variable::new(v, format!("q{}", v.0)), Domain::range(1, 4));
         }
 
-        // Row difference / AllDifferent
+        // Column distinctness: no two queens share a column.
         graph.add_constraint(Arc::new(AllDifferent::new(vars.clone())));
 
-        // Diagonals
+        // Diagonal distinctness: q[i] - q[j] != +-(j - i) for every row pair i < j.
         for i in 0..4 {
             for j in (i + 1)..4 {
-                let _diff = (j - i) as i64;
-                graph.add_constraint(Arc::new(NotEqual::new(vars[i], vars[j])));
-                // Diagonal constraints: q[i] - q[j] != j - i and q[i] - q[j] != i - j
-                // implemented via Equal with offset check in general constraints
+                let diff = (j - i) as i64;
+                graph.add_constraint(Arc::new(NotEqual::with_offset(vars[i], vars[j], diff)));
+                graph.add_constraint(Arc::new(NotEqual::with_offset(vars[i], vars[j], -diff)));
             }
         }
 
         let solver = BacktrackingSolver::new();
         let res = solver.solve(&graph, &SolverOptions::default());
-        assert!(matches!(res, SolveResult::Feasible { .. }));
+
+        match res {
+            SolveResult::Feasible { assignment, .. } => {
+                // Don't just trust the solver's own feasibility claim: independently verify the
+                // returned assignment against both N-Queens rules.
+                for i in 0..4 {
+                    for j in (i + 1)..4 {
+                        let qi = assignment[&vars[i]];
+                        let qj = assignment[&vars[j]];
+                        assert_ne!(qi, qj, "queens in row {i} and {j} share column {qi}");
+                        assert_ne!(
+                            (qi - qj).abs(),
+                            (j - i) as i64,
+                            "queens in row {i} and {j} share a diagonal"
+                        );
+                    }
+                }
+            }
+            other => panic!("Expected feasible N-Queens(4) solution, got {other:?}"),
+        }
     }
 }

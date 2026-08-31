@@ -49,7 +49,7 @@ fn main() {
     ];
     builder.add_no_overlap(&teacher_mueller_intervals, &[math_dur, physics_dur]);
 
-    let graph = builder.build();
+    let graph = builder.build().expect("model should validate");
     println!("Model built with {} variables.", graph.variables().len());
 
     println!("Running Parallel Portfolio Solver (Backtracking + Local Search + LNS)...");
@@ -57,7 +57,9 @@ fn main() {
     let options = SolverOptions::default();
 
     match solver.solve(&graph, &options) {
-        SolveResult::Feasible { assignment, score } => {
+        SolveResult::Feasible {
+            assignment, score, ..
+        } => {
             println!("✅ Feasible Schedule Found!");
             println!("Score: {}", score);
             println!("Schedule Assignment:");
@@ -68,8 +70,8 @@ fn main() {
         SolveResult::Infeasible => {
             println!("❌ Problem is Infeasible");
         }
-        SolveResult::Timeout => {
-            println!("⏰ Search Timed Out");
+        SolveResult::Aborted { reason } => {
+            println!("⏰ Search Aborted ({reason:?})");
         }
     }
 }

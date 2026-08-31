@@ -27,9 +27,10 @@ pub use constraint::{
 };
 pub use dsl::ModelBuilder;
 pub use model::{Activity, Domain, Group, Interval, Resource, Variable, VariableId};
-pub use propagation::{ConstraintGraph, PropagationEngine};
-pub use score::{HardSoftScore, ScoreCalculator};
+pub use propagation::{ConstraintGraph, ModelError, PropagationEngine};
+pub use score::{HardSoftScore, Objective, ScoreCalculator, WeightedSum};
 pub use solver::{
-    BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LocalSearchSolver, LnsSolver,
-    ParallelSolver, SearchStatistics, SolveResult, SolverOptions, UnifierProblemAdapter,
+    AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,
+    LocalSearchSolver, ParallelSolver, SearchStatistics, SolveResult, SolverOptions,
+    UnifierProblemAdapter,
 };

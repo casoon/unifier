@@ -15,7 +15,11 @@ use std::collections::HashMap;
 ///
 /// # Complexity
 /// Time: O(N) where N is `scope.len()`. Space: O(1).
-fn count_at_target(scope: &[VariableId], assignment: &HashMap<VariableId, i64>, target_value: i64) -> usize {
+fn count_at_target(
+    scope: &[VariableId],
+    assignment: &HashMap<VariableId, i64>,
+    target_value: i64,
+) -> usize {
     scope
         .iter()
         .filter(|v| assignment.get(v) == Some(&target_value))
@@ -62,17 +66,17 @@ impl Constraint for ExactlyOne {
         let mut last_possible_var = None;
 
         for &var_id in &self.scope {
-            if let Some(domain) = domains.get(&var_id) {
-                if domain.contains(self.target_value) {
-                    possible_count += 1;
-                    last_possible_var = Some(var_id);
-                    if domain.len() == 1 {
-                        if fixed_target_var.is_some() {
-                            // Two variables fixed to target_value -> Conflict
-                            return PropagationResult::Conflict;
-                        }
-                        fixed_target_var = Some(var_id);
+            if let Some(domain) = domains.get(&var_id)
+                && domain.contains(self.target_value)
+            {
+                possible_count += 1;
+                last_possible_var = Some(var_id);
+                if domain.len() == 1 {
+                    if fixed_target_var.is_some() {
+                        // Two variables fixed to target_value -> Conflict
+                        return PropagationResult::Conflict;
                     }
+                    fixed_target_var = Some(var_id);
                 }
             }
         }
@@ -84,27 +88,27 @@ impl Constraint for ExactlyOne {
         // If one variable is fixed to target_value, prune target_value from all other variables
         if let Some(fixed_var) = fixed_target_var {
             for &var_id in &self.scope {
-                if var_id != fixed_var {
-                    if let Some(d) = domains.get_mut(&var_id) {
-                        if d.remove(self.target_value) {
-                            changed = true;
-                        }
-                        if d.is_empty() {
-                            return PropagationResult::Conflict;
-                        }
-                    }
-                }
-            }
-        } else if possible_count == 1 {
-            // Only one variable CAN take target_value -> force it to take target_value
-            if let Some(only_var) = last_possible_var {
-                if let Some(d) = domains.get_mut(&only_var) {
-                    if d.assign(self.target_value) {
+                if var_id != fixed_var
+                    && let Some(d) = domains.get_mut(&var_id)
+                {
+                    if d.remove(self.target_value) {
                         changed = true;
                     }
                     if d.is_empty() {
                         return PropagationResult::Conflict;
                     }
+                }
+            }
+        } else if possible_count == 1 {
+            // Only one variable CAN take target_value -> force it to take target_value
+            if let Some(only_var) = last_possible_var
+                && let Some(d) = domains.get_mut(&only_var)
+            {
+                if d.assign(self.target_value) {
+                    changed = true;
+                }
+                if d.is_empty() {
+                    return PropagationResult::Conflict;
                 }
             }
         }
@@ -123,7 +127,11 @@ pub struct AtMost {
 
 impl AtMost {
     /// Creates an `AtMost` constraint enforcing at most `k` variables take `target_value`.
-    pub fn new(k: usize, variables: impl IntoIterator<Item = VariableId>, target_value: i64) -> Self {
+    pub fn new(
+        k: usize,
+        variables: impl IntoIterator<Item = VariableId>,
+        target_value: i64,
+    ) -> Self {
         Self {
             scope: variables.into_iter().collect(),
             target_value,
@@ -150,10 +158,11 @@ impl Constraint for AtMost {
         let mut fixed_count = 0;
 
         for &var_id in &self.scope {
-            if let Some(domain) = domains.get(&var_id) {
-                if domain.len() == 1 && domain.contains(self.target_value) {
-                    fixed_count += 1;
-                }
+            if let Some(domain) = domains.get(&var_id)
+                && domain.len() == 1
+                && domain.contains(self.target_value)
+            {
+                fixed_count += 1;
             }
         }
 
@@ -164,14 +173,15 @@ impl Constraint for AtMost {
         if fixed_count == self.k {
             // Prune target_value from all unassigned variables
             for &var_id in &self.scope {
-                if let Some(d) = domains.get_mut(&var_id) {
-                    if d.len() > 1 && d.contains(self.target_value) {
-                        if d.remove(self.target_value) {
-                            changed = true;
-                        }
-                        if d.is_empty() {
-                            return PropagationResult::Conflict;
-                        }
+                if let Some(d) = domains.get_mut(&var_id)
+                    && d.len() > 1
+                    && d.contains(self.target_value)
+                {
+                    if d.remove(self.target_value) {
+                        changed = true;
+                    }
+                    if d.is_empty() {
+                        return PropagationResult::Conflict;
                     }
                 }
             }
@@ -191,7 +201,11 @@ pub struct AtLeast {
 
 impl AtLeast {
     /// Creates an `AtLeast` constraint enforcing at least `k` variables take `target_value`.
-    pub fn new(k: usize, variables: impl IntoIterator<Item = VariableId>, target_value: i64) -> Self {
+    pub fn new(
+        k: usize,
+        variables: impl IntoIterator<Item = VariableId>,
+        target_value: i64,
+    ) -> Self {
         Self {
             scope: variables.into_iter().collect(),
             target_value,
@@ -218,10 +232,10 @@ impl Constraint for AtLeast {
         let mut possible_vars = Vec::new();
 
         for &var_id in &self.scope {
-            if let Some(domain) = domains.get(&var_id) {
-                if domain.contains(self.target_value) {
-                    possible_vars.push(var_id);
-                }
+            if let Some(domain) = domains.get(&var_id)
+                && domain.contains(self.target_value)
+            {
+                possible_vars.push(var_id);
             }
         }
 

@@ -8,7 +8,7 @@
 //!   Mathematical and Computer Modelling, 17(7), 57-73.
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
-use crate::constraint::{domain_bounds, prune, Constraint, PropagationResult};
+use crate::constraint::{Constraint, PropagationResult, domain_bounds, prune};
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -91,14 +91,26 @@ impl Constraint for Cumulative {
         true
     }
 
+    fn validate(&self) -> Result<(), String> {
+        for task in &self.tasks {
+            if task.demand > self.capacity {
+                return Err(format!(
+                    "task on {:?} has demand {} exceeding capacity {}: can never be scheduled",
+                    task.start, task.demand, self.capacity
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
         let mut changed = false;
 
-        // Timetable propagation over bound/assigned task intervals
+        // Safety net for graphs built without `ConstraintGraph::validate` (which already rejects
+        // this structurally, see `validate` above).
         for task in &self.tasks {
-            let demand = task.demand;
-            if demand > self.capacity {
-                return PropagationResult::Conflict; // Single task exceeds total resource capacity
+            if task.demand > self.capacity {
+                return PropagationResult::Conflict;
             }
         }
 
@@ -119,20 +131,22 @@ impl Constraint for Cumulative {
                     if i == j {
                         continue;
                     }
-                    if let Some(d2) = domains.get(&t2.start) {
-                        if let (Some(min2), Some(max2)) = (d2.min(), d2.max()) {
-                            let mand_start = max2;
-                            let mand_end = min2 + t2.duration as i64;
-                            if mand_start < mand_end && t_check >= mand_start && t_check < mand_end {
-                                total_demand = total_demand.saturating_add(t2.demand);
-                            }
+                    if let Some(d2) = domains.get(&t2.start)
+                        && let (Some(min2), Some(max2)) = (d2.min(), d2.max())
+                    {
+                        let mand_start = max2;
+                        let mand_end = min2 + t2.duration as i64;
+                        if mand_start < mand_end && t_check >= mand_start && t_check < mand_end {
+                            total_demand = total_demand.saturating_add(t2.demand);
                         }
                     }
                 }
 
                 if total_demand > self.capacity {
                     // t_check is infeasible for t1.start -> remove t_check from t1 domain
-                    if let Some(result) = prune(domains, &mut changed, t1.start, |d| d.remove(t_check)) {
+                    if let Some(result) =
+                        prune(domains, &mut changed, t1.start, |d| d.remove(t_check))
+                    {
                         return result;
                     }
                 }

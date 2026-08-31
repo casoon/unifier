@@ -37,10 +37,8 @@ impl PropagationEngine {
             .map(|i| ConstraintId(i as u32))
             .collect();
 
-        let mut in_queue: HashMap<ConstraintId, bool> = queue
-            .iter()
-            .map(|&cid| (cid, true))
-            .collect();
+        let mut in_queue: HashMap<ConstraintId, bool> =
+            queue.iter().map(|&cid| (cid, true)).collect();
 
         let mut global_changed = false;
 
@@ -56,7 +54,8 @@ impl PropagationEngine {
                             // Enqueue all constraints sharing variables with the scope of cid
                             for &var_id in constraint.scope() {
                                 for &dep_cid in graph.constraints_for_variable(var_id) {
-                                    if dep_cid != cid && !*in_queue.get(&dep_cid).unwrap_or(&false) {
+                                    if dep_cid != cid && !*in_queue.get(&dep_cid).unwrap_or(&false)
+                                    {
                                         queue.push_back(dep_cid);
                                         in_queue.insert(dep_cid, true);
                                     }

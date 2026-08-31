@@ -3,7 +3,7 @@
 //! Reference:
 //! - Dechter, R. (2003). *Constraint Processing*. Morgan Kaufmann.
 
-use crate::constraint::{compare_assigned, prune, require_bounds, Constraint, PropagationResult};
+use crate::constraint::{Constraint, PropagationResult, compare_assigned, prune, require_bounds};
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -42,7 +42,9 @@ impl Constraint for Equal {
     }
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
-        compare_assigned(assignment, self.v1, self.v2, |val1, val2| val1 == val2 + self.offset)
+        compare_assigned(assignment, self.v1, self.v2, |val1, val2| {
+            val1 == val2 + self.offset
+        })
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {

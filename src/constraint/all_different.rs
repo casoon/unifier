@@ -39,10 +39,10 @@ impl Constraint for AllDifferent {
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         let mut seen = HashSet::new();
         for var in &self.scope {
-            if let Some(&val) = assignment.get(var) {
-                if !seen.insert(val) {
-                    return false; // Duplicate value found
-                }
+            if let Some(&val) = assignment.get(var)
+                && !seen.insert(val)
+            {
+                return false; // Duplicate value found
             }
         }
         true
@@ -54,15 +54,13 @@ impl Constraint for AllDifferent {
         // Collect all fixed values (singleton domains)
         let mut fixed_values = HashSet::new();
         for var in &self.scope {
-            if let Some(domain) = domains.get(var) {
-                if domain.len() == 1 {
-                    if let Some(val) = domain.min() {
-                        if !fixed_values.insert(val) {
-                            // Two fixed variables have the same value -> Conflict
-                            return PropagationResult::Conflict;
-                        }
-                    }
-                }
+            if let Some(domain) = domains.get(var)
+                && domain.len() == 1
+                && let Some(val) = domain.min()
+                && !fixed_values.insert(val)
+            {
+                // Two fixed variables have the same value -> Conflict
+                return PropagationResult::Conflict;
             }
         }
 
@@ -72,16 +70,16 @@ impl Constraint for AllDifferent {
 
         // Prune fixed values from all non-fixed variables in scope
         for var in &self.scope {
-            if let Some(domain) = domains.get_mut(var) {
-                if domain.len() > 1 {
-                    for &val in &fixed_values {
-                        if domain.remove(val) {
-                            changed = true;
-                        }
+            if let Some(domain) = domains.get_mut(var)
+                && domain.len() > 1
+            {
+                for &val in &fixed_values {
+                    if domain.remove(val) {
+                        changed = true;
                     }
-                    if domain.is_empty() {
-                        return PropagationResult::Conflict;
-                    }
+                }
+                if domain.is_empty() {
+                    return PropagationResult::Conflict;
                 }
             }
         }

@@ -65,7 +65,10 @@ impl Domain {
                 if min > max {
                     0
                 } else {
-                    (*max - *min + 1) as usize
+                    // Widen to i128 first: `max - min` overflows i64 arithmetic for a range
+                    // spanning close to the full i64 domain (e.g. `Domain::range(i64::MIN, i64::MAX)`).
+                    let span = (*max as i128) - (*min as i128) + 1;
+                    usize::try_from(span).unwrap_or(usize::MAX)
                 }
             }
             Domain::Explicit(set) => set.len(),
@@ -264,5 +267,20 @@ mod tests {
         assert_eq!(d.values(), vec![20, 30, 40]);
         assert!(d.remove_above(30));
         assert_eq!(d.values(), vec![20, 30]);
+    }
+
+    #[test]
+    fn test_len_near_i64_boundaries_does_not_overflow() {
+        // A moderate range anchored at the i64 boundary: realistic if a modeler uses i64::MAX as
+        // a sentinel "unbounded" upper bound.
+        let d = Domain::range(i64::MAX - 9, i64::MAX);
+        assert_eq!(d.len(), 10);
+        assert_eq!(d.min(), Some(i64::MAX - 9));
+        assert_eq!(d.max(), Some(i64::MAX));
+
+        // The extreme case: `max - min` alone overflows i64 arithmetic.
+        let full = Domain::range(i64::MIN, i64::MAX);
+        assert_eq!(full.len(), usize::MAX);
+        assert!(!full.is_empty());
     }
 }

@@ -61,6 +61,18 @@ pub trait Constraint: Debug + Send + Sync {
 
     /// Enforces arc/bounds consistency by pruning inconsistent values from variable domains.
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult;
+
+    /// Validates the constraint's own parameters independent of any assignment or domain state.
+    ///
+    /// Returns `Err(reason)` for structurally invalid parameters (e.g. a fixed demand exceeding a
+    /// fixed capacity), as opposed to a model that merely turns out to be unsatisfiable through
+    /// the interaction of several constraints. Called once by [`ConstraintGraph::validate`]
+    /// before solving; the default implementation accepts any parameters.
+    ///
+    /// [`ConstraintGraph::validate`]: crate::propagation::graph::ConstraintGraph::validate
+    fn validate(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /// Evaluates a binary comparator over two assigned variables.
@@ -110,7 +122,10 @@ pub(crate) fn require_bounds(
 ///
 /// # Complexity
 /// Time & Space: O(1).
-pub(crate) fn domain_bounds(domains: &HashMap<VariableId, Domain>, var: VariableId) -> Option<(i64, i64)> {
+pub(crate) fn domain_bounds(
+    domains: &HashMap<VariableId, Domain>,
+    var: VariableId,
+) -> Option<(i64, i64)> {
     let d = domains.get(&var)?;
     Some((d.min()?, d.max()?))
 }

@@ -13,7 +13,8 @@ use crate::model::group::{Group, GroupId};
 use crate::model::interval::{DurationSpec, Interval};
 use crate::model::resource::{Resource, ResourceId};
 use crate::model::variable::{Variable, VariableId};
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::{ConstraintGraph, ModelError};
+use crate::score::{Objective, WeightedSum};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
@@ -95,7 +96,8 @@ impl ModelBuilder {
 
     /// Adds an `Equal` constraint `v1 = v2 + offset`.
     pub fn add_equal(&mut self, v1: VariableId, v2: VariableId, offset: i64) {
-        self.graph.add_constraint(Arc::new(Equal::new(v1, v2, offset)));
+        self.graph
+            .add_constraint(Arc::new(Equal::new(v1, v2, offset)));
     }
 
     /// Adds a `NotEqual` constraint `v1 != v2`.
@@ -122,7 +124,11 @@ impl ModelBuilder {
     }
 
     /// Adds a `ForbiddenValues` domain restriction constraint.
-    pub fn add_forbidden_values(&mut self, var: VariableId, forbidden: impl IntoIterator<Item = i64>) {
+    pub fn add_forbidden_values(
+        &mut self,
+        var: VariableId,
+        forbidden: impl IntoIterator<Item = i64>,
+    ) {
         self.graph
             .add_constraint(Arc::new(ForbiddenValues::new(var, forbidden)));
     }
@@ -133,19 +139,33 @@ impl ModelBuilder {
     }
 
     /// Adds an `ExactlyOne` constraint enforcing exactly one variable takes `target_value`.
-    pub fn add_exactly_one(&mut self, vars: impl IntoIterator<Item = VariableId>, target_value: i64) {
+    pub fn add_exactly_one(
+        &mut self,
+        vars: impl IntoIterator<Item = VariableId>,
+        target_value: i64,
+    ) {
         self.graph
             .add_constraint(Arc::new(ExactlyOne::new(vars, target_value)));
     }
 
     /// Adds an `AtMost` constraint enforcing at most `k` variables take `target_value`.
-    pub fn add_at_most(&mut self, k: usize, vars: impl IntoIterator<Item = VariableId>, target_value: i64) {
+    pub fn add_at_most(
+        &mut self,
+        k: usize,
+        vars: impl IntoIterator<Item = VariableId>,
+        target_value: i64,
+    ) {
         self.graph
             .add_constraint(Arc::new(AtMost::new(k, vars, target_value)));
     }
 
     /// Adds an `AtLeast` constraint enforcing at least `k` variables take `target_value`.
-    pub fn add_at_least(&mut self, k: usize, vars: impl IntoIterator<Item = VariableId>, target_value: i64) {
+    pub fn add_at_least(
+        &mut self,
+        k: usize,
+        vars: impl IntoIterator<Item = VariableId>,
+        target_value: i64,
+    ) {
         self.graph
             .add_constraint(Arc::new(AtLeast::new(k, vars, target_value)));
     }
@@ -162,8 +182,28 @@ impl ModelBuilder {
             .add_constraint(Arc::new(Cumulative::new(tasks, capacity)));
     }
 
-    /// Consumes the builder and returns the constructed [`ConstraintGraph`].
-    pub fn build(self) -> ConstraintGraph {
+    /// Adds a custom soft objective term to the model.
+    pub fn add_objective(&mut self, objective: Arc<dyn Objective>) {
+        self.graph.add_objective(objective);
+    }
+
+    /// Adds a soft objective maximizing `sum(vars) * weight` (`weight` must be positive).
+    pub fn add_maximize(&mut self, vars: impl IntoIterator<Item = VariableId>, weight: i64) {
         self.graph
+            .add_objective(Arc::new(WeightedSum::new(vars, weight)));
+    }
+
+    /// Adds a soft objective minimizing `sum(vars) * weight` (`weight` must be positive).
+    pub fn add_minimize(&mut self, vars: impl IntoIterator<Item = VariableId>, weight: i64) {
+        self.graph
+            .add_objective(Arc::new(WeightedSum::new(vars, -weight)));
+    }
+
+    /// Consumes the builder, validates the model, and returns the constructed [`ConstraintGraph`].
+    ///
+    /// See [`ConstraintGraph::validate`] for what is checked.
+    pub fn build(self) -> Result<ConstraintGraph, Vec<ModelError>> {
+        self.graph.validate()?;
+        Ok(self.graph)
     }
 }

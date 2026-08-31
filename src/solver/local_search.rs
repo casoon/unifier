@@ -10,7 +10,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ConstraintGraph;
 use crate::score::ScoreCalculator;
-use crate::solver::{is_timed_out, SolveResult, SolverOptions};
+use crate::solver::{AbortReason, SolveResult, SolverOptions, check_abort};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -56,15 +56,18 @@ impl LocalSearchSolver {
             }
         }
 
-        let mut current_score = self.score_calculator.calculate_score(graph, &current_assignment);
+        let mut current_score = self
+            .score_calculator
+            .calculate_score(graph, &current_assignment);
         let mut best_assignment = current_assignment.clone();
         let mut best_score = current_score;
 
         let mut tabu_list: VecDeque<(VariableId, i64)> = VecDeque::with_capacity(self.tabu_tenure);
         let start_time = Instant::now();
         let mut step_count = 0u64;
+        let mut deadlocked = false;
 
-        while !is_timed_out(options, start_time, step_count) {
+        while check_abort(options, start_time, step_count).is_none() {
             step_count += 1;
 
             if best_score.is_feasible() && best_score.hard == 0 && best_score.soft == 0 {
@@ -137,6 +140,7 @@ impl LocalSearchSolver {
                 }
             } else {
                 // Local optimum deadlock / no valid moves found
+                deadlocked = true;
                 break;
             }
         }
@@ -145,11 +149,17 @@ impl LocalSearchSolver {
             SolveResult::Feasible {
                 assignment: best_assignment,
                 score: best_score,
+                proven_optimal: false,
             }
-        } else if is_timed_out(options, start_time, step_count) {
-            SolveResult::Timeout
+        } else if deadlocked {
+            SolveResult::Aborted {
+                reason: AbortReason::LocalOptimum,
+            }
         } else {
-            SolveResult::Infeasible
+            // The while condition became false: check_abort must have returned Some.
+            let reason =
+                check_abort(options, start_time, step_count).unwrap_or(AbortReason::Timeout);
+            SolveResult::Aborted { reason }
         }
     }
 }

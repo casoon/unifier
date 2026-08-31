@@ -7,8 +7,15 @@ optimization primitives.
 
 ## Status
 
-Concept phase. No implementation yet — see `plan/01-concept.md` (local,
-untracked) for scope and design rationale.
+Pre-release, not yet published to crates.io. The core model, constraint
+propagation, global constraints, hard/soft scoring with weighted
+objectives, model validation, and five solver strategies (Backtracking,
+Branch & Bound with optimistic-bound pruning, Local Search, LNS,
+Parallel Portfolio) are implemented and tested. See
+`plan/00-STATUS.md` (local, untracked) for the implementation log and
+`plan/08-project-evaluation.md` for an independent maturity assessment
+and its release recommendation before relying on this for production
+planning scenarios.
 
 ## Problem class
 
