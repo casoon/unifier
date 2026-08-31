@@ -26,6 +26,31 @@ fn count_at_target(
         .count()
 }
 
+/// Counts, among `scope`, how many variables' domains still contain `target_value`
+/// (`possible`) and how many are already fixed (singleton domain) to it (`fixed`).
+///
+/// # Complexity
+/// Time: O(N) where N is `scope.len()`. Space: O(1).
+fn target_reachability(
+    scope: &[VariableId],
+    domains: &HashMap<VariableId, Domain>,
+    target_value: i64,
+) -> (usize, usize) {
+    let mut possible = 0;
+    let mut fixed = 0;
+    for &v in scope {
+        if let Some(d) = domains.get(&v)
+            && d.contains(target_value)
+        {
+            possible += 1;
+            if d.len() == 1 {
+                fixed += 1;
+            }
+        }
+    }
+    (possible, fixed)
+}
+
 /// Global constraint enforcing that exactly one variable in `scope` takes `target_value`.
 #[derive(Debug, Clone)]
 pub struct ExactlyOne {
@@ -57,6 +82,17 @@ impl Constraint for ExactlyOne {
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         count_at_target(&self.scope, assignment, self.target_value) == 1
+    }
+
+    fn is_satisfiable(
+        &self,
+        domains: &HashMap<VariableId, Domain>,
+        _assignment: &HashMap<VariableId, i64>,
+    ) -> bool {
+        // Still reachable unless more than one variable is already fixed to target_value (can
+        // never come back down to exactly one), or no variable can possibly still reach it.
+        let (possible, fixed) = target_reachability(&self.scope, domains, self.target_value);
+        fixed <= 1 && possible >= 1
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {
@@ -225,6 +261,17 @@ impl Constraint for AtLeast {
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         count_at_target(&self.scope, assignment, self.target_value) >= self.k
+    }
+
+    fn is_satisfiable(
+        &self,
+        domains: &HashMap<VariableId, Domain>,
+        _assignment: &HashMap<VariableId, i64>,
+    ) -> bool {
+        // Still reachable as long as enough variables could still take target_value, even if
+        // none has yet.
+        let (possible, _fixed) = target_reachability(&self.scope, domains, self.target_value);
+        possible >= self.k
     }
 
     fn propagate(&self, domains: &mut HashMap<VariableId, Domain>) -> PropagationResult {

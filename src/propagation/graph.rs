@@ -234,6 +234,16 @@ impl ConstraintGraph {
             Err(errors)
         }
     }
+
+    /// Validates the graph (see [`Self::validate`]) and, on success, consumes it into a
+    /// [`ValidatedGraph`] that public solvers accept.
+    ///
+    /// # Complexity
+    /// Time: O(V + C + O), see [`Self::validate`].
+    pub fn finalize(self) -> Result<ValidatedGraph, Vec<ModelError>> {
+        self.validate()?;
+        Ok(ValidatedGraph(self))
+    }
 }
 
 impl fmt::Debug for ConstraintGraph {
@@ -242,5 +252,47 @@ impl fmt::Debug for ConstraintGraph {
             .field("num_variables", &self.variables.len())
             .field("num_constraints", &self.constraints.len())
             .finish()
+    }
+}
+
+/// A [`ConstraintGraph`] that has passed [`ConstraintGraph::validate`].
+///
+/// All public solvers accept this type instead of a bare `ConstraintGraph`, so the
+/// well-formedness contract from `validate` (no unknown-variable references, no empty domains,
+/// no duplicate variable IDs, no self-contradictory constraint parameters) is enforced as part
+/// of the solver contract rather than an opt-in check callers can skip by constructing and
+/// mutating a `ConstraintGraph` directly.
+///
+/// Read access is available via [`std::ops::Deref`] to `ConstraintGraph`. There is deliberately
+/// no public mutable access and no public constructor other than [`ConstraintGraph::finalize`] —
+/// solvers that need to explore mutated *copies* of the underlying graph during search (LNS
+/// sub-problems, per-worker clones in [`crate::solver::ParallelSolver`]) do so via
+/// `assume_valid`, which is `pub(crate)`-only: it is only ever applied to structural
+/// derivatives of a graph that was already validated at its public entry point, never to an
+/// arbitrary caller-constructed graph.
+#[derive(Debug, Clone)]
+pub struct ValidatedGraph(ConstraintGraph);
+
+impl ValidatedGraph {
+    /// Returns a reference to the wrapped, validated constraint graph.
+    #[inline]
+    pub fn graph(&self) -> &ConstraintGraph {
+        &self.0
+    }
+
+    /// Wraps `graph` as validated without re-running [`ConstraintGraph::validate`].
+    ///
+    /// Restricted to the crate: only for solver-internal derivatives (domain narrowing, cloning)
+    /// of a graph that was already validated at its public entry point.
+    pub(crate) fn assume_valid(graph: ConstraintGraph) -> Self {
+        Self(graph)
+    }
+}
+
+impl std::ops::Deref for ValidatedGraph {
+    type Target = ConstraintGraph;
+
+    fn deref(&self) -> &ConstraintGraph {
+        &self.0
     }
 }

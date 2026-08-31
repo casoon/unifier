@@ -132,10 +132,20 @@ impl Domain {
         match self {
             Domain::Range { min, max } => {
                 if val == *min {
-                    *min += 1;
+                    // `checked_add` guards the single-value domain `{i64::MAX}`: `min + 1` would
+                    // overflow, but the domain becoming empty (the `{min: 1, max: 0}` sentinel
+                    // used throughout this type) is exactly the correct result here.
+                    match min.checked_add(1) {
+                        Some(new_min) => *min = new_min,
+                        None => (*min, *max) = (1, 0),
+                    }
                     true
                 } else if val == *max {
-                    *max -= 1;
+                    // Symmetric guard for the single-value domain `{i64::MIN}`.
+                    match max.checked_sub(1) {
+                        Some(new_max) => *max = new_max,
+                        None => (*min, *max) = (1, 0),
+                    }
                     true
                 } else {
                     // Split range into explicit set
@@ -191,7 +201,12 @@ impl Domain {
                 }
             }
             Domain::Explicit(set) => {
-                let to_remove: Vec<i64> = set.range((max_val + 1)..).copied().collect();
+                // `max_val + 1` would overflow for `max_val == i64::MAX`; nothing can be "above"
+                // it in that case, so there is nothing to remove.
+                let to_remove: Vec<i64> = match max_val.checked_add(1) {
+                    Some(lower_bound) => set.range(lower_bound..).copied().collect(),
+                    None => Vec::new(),
+                };
 
                 if to_remove.is_empty() {
                     false
@@ -282,5 +297,27 @@ mod tests {
         let full = Domain::range(i64::MIN, i64::MAX);
         assert_eq!(full.len(), usize::MAX);
         assert!(!full.is_empty());
+    }
+
+    #[test]
+    fn test_remove_single_value_domain_at_i64_extremes_does_not_overflow() {
+        // Removing the only value of a domain pinned at i64::MAX: `min + 1` would overflow.
+        let mut at_max = Domain::range(i64::MAX, i64::MAX);
+        assert!(at_max.remove(i64::MAX));
+        assert!(at_max.is_empty());
+
+        // Symmetric case: `max - 1` would overflow.
+        let mut at_min = Domain::range(i64::MIN, i64::MIN);
+        assert!(at_min.remove(i64::MIN));
+        assert!(at_min.is_empty());
+    }
+
+    #[test]
+    fn test_remove_above_i64_max_on_explicit_domain_does_not_overflow() {
+        // `max_val + 1` would overflow for `max_val == i64::MAX`; nothing is above it, so
+        // nothing should be removed.
+        let mut d = Domain::from_values(vec![1, 2, i64::MAX]);
+        assert!(!d.remove_above(i64::MAX));
+        assert_eq!(d.values(), vec![1, 2, i64::MAX]);
     }
 }

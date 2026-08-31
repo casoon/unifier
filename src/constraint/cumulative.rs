@@ -8,7 +8,7 @@
 //!   Mathematical and Computer Modelling, 17(7), 57-73.
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
-use crate::constraint::{Constraint, PropagationResult, domain_bounds, prune};
+use crate::constraint::{Constraint, PropagationResult, domain_bounds, duration_as_i64, prune};
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -66,7 +66,7 @@ impl Constraint for Cumulative {
         for task in &self.tasks {
             if let Some(&s) = assignment.get(&task.start) {
                 time_points.push(s);
-                time_points.push(s + task.duration as i64);
+                time_points.push(s.saturating_add(duration_as_i64(task.duration)));
             }
         }
         time_points.sort_unstable();
@@ -77,7 +77,7 @@ impl Constraint for Cumulative {
             let mut total_demand: u32 = 0;
             for task in &self.tasks {
                 if let Some(&s) = assignment.get(&task.start) {
-                    let end = s + task.duration as i64;
+                    let end = s.saturating_add(duration_as_i64(task.duration));
                     if t >= s && t < end {
                         total_demand = total_demand.saturating_add(task.demand);
                     }
@@ -135,7 +135,7 @@ impl Constraint for Cumulative {
                         && let (Some(min2), Some(max2)) = (d2.min(), d2.max())
                     {
                         let mand_start = max2;
-                        let mand_end = min2 + t2.duration as i64;
+                        let mand_end = min2.saturating_add(duration_as_i64(t2.duration));
                         if mand_start < mand_end && t_check >= mand_start && t_check < mand_end {
                             total_demand = total_demand.saturating_add(t2.demand);
                         }

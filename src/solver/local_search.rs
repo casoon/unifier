@@ -8,9 +8,11 @@
 //! - Aarts, E., & Lenstra, J. K. (1997). *Local Search in Combinatorial Optimization*. Princeton University Press.
 
 use crate::model::variable::VariableId;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::ValidatedGraph;
 use crate::score::ScoreCalculator;
-use crate::solver::{AbortReason, SolveResult, SolverOptions, check_abort};
+use crate::solver::{
+    AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+};
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -44,7 +46,8 @@ impl LocalSearchSolver {
     /// # Complexity
     /// Time: O(N * D * K) per search step where N is variables count, D is max domain size, K is affected constraints count.
     /// Space: O(N + T) where T is tabu tenure.
-    pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
+    pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
+        let start_time = Instant::now();
         let mut current_assignment = HashMap::new();
 
         // Generate initial assignment (min element of each variable domain)
@@ -52,7 +55,10 @@ impl LocalSearchSolver {
             if let Some(min_val) = domain.min() {
                 current_assignment.insert(var_id, min_val);
             } else {
-                return SolveResult::Infeasible;
+                return SolveOutcome::infeasible(SearchStatistics {
+                    nodes_expanded: 0,
+                    elapsed: start_time.elapsed(),
+                });
             }
         }
 
@@ -63,7 +69,6 @@ impl LocalSearchSolver {
         let mut best_score = current_score;
 
         let mut tabu_list: VecDeque<(VariableId, i64)> = VecDeque::with_capacity(self.tabu_tenure);
-        let start_time = Instant::now();
         let mut step_count = 0u64;
         let mut deadlocked = false;
 
@@ -145,21 +150,27 @@ impl LocalSearchSolver {
             }
         }
 
+        let statistics = SearchStatistics {
+            nodes_expanded: step_count,
+            elapsed: start_time.elapsed(),
+        };
+
         if best_score.is_feasible() {
-            SolveResult::Feasible {
-                assignment: best_assignment,
-                score: best_score,
-                proven_optimal: false,
-            }
+            SolveOutcome::feasible(
+                Solution {
+                    assignment: best_assignment,
+                    score: best_score,
+                },
+                statistics,
+                None,
+            )
         } else if deadlocked {
-            SolveResult::Aborted {
-                reason: AbortReason::LocalOptimum,
-            }
+            SolveOutcome::aborted(AbortReason::LocalOptimum, statistics)
         } else {
             // The while condition became false: check_abort must have returned Some.
             let reason =
                 check_abort(options, start_time, step_count).unwrap_or(AbortReason::Timeout);
-            SolveResult::Aborted { reason }
+            SolveOutcome::aborted(reason, statistics)
         }
     }
 }

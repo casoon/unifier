@@ -60,31 +60,106 @@ pub enum AbortReason {
     LocalOptimum,
 }
 
-/// Result returned by a solver run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SolveResult {
-    /// A valid assignment satisfying all hard constraints was found.
-    ///
-    /// `proven_optimal` is `true` only if the solver established that no better `score` is
-    /// reachable (e.g. [`BranchAndBoundSolver`] exhausted or bound-pruned the full search
-    /// space). It is always `false` for solvers that cannot make that guarantee (Backtracking
-    /// stops at the first feasible assignment; Local Search and LNS are incomplete heuristics) —
-    /// in that case `assignment` is the best incumbent found before the search ended.
-    Feasible {
-        assignment: HashMap<VariableId, i64>,
-        score: HardSoftScore,
-        proven_optimal: bool,
-    },
+/// What a solver run established about the problem.
+///
+/// Decoupled from whether an incumbent solution was found: `Aborted` can still carry no
+/// solution, while `Feasible`/`Optimal` always do (see [`SolveOutcome::solution`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SolveStatus {
+    /// A feasible solution was found and proven optimal: no better score is reachable.
+    /// Currently only [`BranchAndBoundSolver`] can establish this.
+    Optimal,
+    /// A feasible solution was found, but the search ended before optimality could be proven —
+    /// or the solver used (Backtracking, Local Search, LNS) cannot prove it at all.
+    Feasible,
     /// The constraint network is provably unsatisfiable: the full search space was exhausted
     /// without finding any feasible assignment.
     Infeasible,
-    /// The search stopped (see `reason`) before finding a feasible assignment and before the
-    /// search space was exhausted, so neither feasibility nor infeasibility could be established.
-    Aborted { reason: AbortReason },
+    /// The search stopped (see the contained [`AbortReason`]) before finding a feasible
+    /// assignment and before the search space was exhausted, so neither feasibility nor
+    /// infeasibility could be established.
+    Aborted(AbortReason),
+}
+
+/// A candidate solution: a complete variable assignment and its score.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Solution {
+    pub assignment: HashMap<VariableId, i64>,
+    pub score: HardSoftScore,
+}
+
+/// Outcome of a solver run: what was established, the best solution found (if any), search
+/// effort spent, and — where the solver tracks one — an optimistic bound on the achievable score.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SolveOutcome {
+    /// What the search established. See [`SolveStatus`].
+    pub status: SolveStatus,
+    /// The best solution found. Present for [`SolveStatus::Optimal`] and
+    /// [`SolveStatus::Feasible`]; absent for [`SolveStatus::Infeasible`] and
+    /// [`SolveStatus::Aborted`].
+    pub solution: Option<Solution>,
+    /// Search effort spent producing this outcome.
+    pub statistics: SearchStatistics,
+    /// An upper bound on the achievable `soft` score, when the solver computes one. Currently
+    /// only [`BranchAndBoundSolver`] populates this (from the root node's optimistic bound,
+    /// which may be loose if the search was aborted before narrowing it further). `None` for
+    /// solvers that do not track a bound (Backtracking, Local Search, LNS, Parallel).
+    pub bound: Option<HardSoftScore>,
+}
+
+impl SolveOutcome {
+    /// Builds a [`SolveStatus::Optimal`] outcome: `solution` is proven to have no better score.
+    pub(crate) fn optimal(
+        solution: Solution,
+        statistics: SearchStatistics,
+        bound: Option<HardSoftScore>,
+    ) -> Self {
+        Self {
+            status: SolveStatus::Optimal,
+            solution: Some(solution),
+            statistics,
+            bound,
+        }
+    }
+
+    /// Builds a [`SolveStatus::Feasible`] outcome: `solution` is the best incumbent found, not
+    /// (yet, or ever) proven optimal.
+    pub(crate) fn feasible(
+        solution: Solution,
+        statistics: SearchStatistics,
+        bound: Option<HardSoftScore>,
+    ) -> Self {
+        Self {
+            status: SolveStatus::Feasible,
+            solution: Some(solution),
+            statistics,
+            bound,
+        }
+    }
+
+    /// Builds a [`SolveStatus::Infeasible`] outcome.
+    pub(crate) fn infeasible(statistics: SearchStatistics) -> Self {
+        Self {
+            status: SolveStatus::Infeasible,
+            solution: None,
+            statistics,
+            bound: None,
+        }
+    }
+
+    /// Builds a [`SolveStatus::Aborted`] outcome.
+    pub(crate) fn aborted(reason: AbortReason, statistics: SearchStatistics) -> Self {
+        Self {
+            status: SolveStatus::Aborted(reason),
+            solution: None,
+            statistics,
+            bound: None,
+        }
+    }
 }
 
 /// Checks whether a search run has exceeded its cancellation token, time limit, or node budget,
-/// returning the specific reason so callers can report it via [`SolveResult::Aborted`].
+/// returning the specific reason so callers can report it via [`SolveStatus::Aborted`].
 ///
 /// Shared by all search-based solvers (Backtracking, Branch & Bound, Local Search, LNS).
 ///

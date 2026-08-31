@@ -10,9 +10,11 @@ use crate::constraint::PropagationResult;
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
 use crate::score::ScoreCalculator;
-use crate::solver::{SolveResult, SolverOptions, check_abort, select_mrv_variable};
+use crate::solver::{
+    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort, select_mrv_variable,
+};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -37,7 +39,7 @@ impl BacktrackingSolver {
     /// # Complexity
     /// Time: O(d^n) worst-case search tree size, mitigated by MRV variable ordering and AC-3 domain pruning.
     /// Space: O(n * d) recursion stack depth and domain snapshot storage.
-    pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
+    pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = graph.domains().clone();
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
@@ -46,27 +48,32 @@ impl BacktrackingSolver {
         // Initial AC-3 propagation over full graph
         if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains)
         {
-            return SolveResult::Infeasible;
+            return SolveOutcome::infeasible(SearchStatistics {
+                nodes_expanded: 0,
+                elapsed: start_time.elapsed(),
+            });
         }
 
-        if self.backtrack(
+        let found = self.backtrack(
             graph,
             &mut current_domains,
             &mut assignment,
             options,
             start_time,
             &mut nodes_count,
-        ) {
+        );
+        let statistics = SearchStatistics {
+            nodes_expanded: nodes_count,
+            elapsed: start_time.elapsed(),
+        };
+
+        if found {
             let score = self.score_calculator.calculate_score(graph, &assignment);
-            SolveResult::Feasible {
-                assignment,
-                score,
-                proven_optimal: false,
-            }
+            SolveOutcome::feasible(Solution { assignment, score }, statistics, None)
         } else if let Some(reason) = check_abort(options, start_time, nodes_count) {
-            SolveResult::Aborted { reason }
+            SolveOutcome::aborted(reason, statistics)
         } else {
-            SolveResult::Infeasible
+            SolveOutcome::infeasible(statistics)
         }
     }
 
@@ -147,20 +154,22 @@ mod tests {
 
         // x = y + 1
         graph.add_constraint(Arc::new(Equal::new(v1, v2, 1)));
+        let graph = graph.finalize().unwrap();
 
         let solver = BacktrackingSolver::new();
-        let res = solver.solve(&graph, &SolverOptions::default());
+        let outcome = solver.solve(&graph, &SolverOptions::default());
 
-        match res {
-            SolveResult::Feasible {
-                assignment, score, ..
-            } => {
+        match outcome.solution {
+            Some(Solution { assignment, score }) => {
                 assert!(score.is_feasible());
                 let x_val = assignment.get(&v1).copied().unwrap();
                 let y_val = assignment.get(&v2).copied().unwrap();
                 assert_eq!(x_val, y_val + 1);
             }
-            _ => panic!("Expected feasible solution"),
+            None => panic!(
+                "Expected feasible solution, got status {:?}",
+                outcome.status
+            ),
         }
     }
 
@@ -185,12 +194,13 @@ mod tests {
                 graph.add_constraint(Arc::new(NotEqual::with_offset(vars[i], vars[j], -diff)));
             }
         }
+        let graph = graph.finalize().unwrap();
 
         let solver = BacktrackingSolver::new();
-        let res = solver.solve(&graph, &SolverOptions::default());
+        let outcome = solver.solve(&graph, &SolverOptions::default());
 
-        match res {
-            SolveResult::Feasible { assignment, .. } => {
+        match outcome.solution {
+            Some(Solution { assignment, .. }) => {
                 // Don't just trust the solver's own feasibility claim: independently verify the
                 // returned assignment against both N-Queens rules.
                 for i in 0..4 {
@@ -206,7 +216,10 @@ mod tests {
                     }
                 }
             }
-            other => panic!("Expected feasible N-Queens(4) solution, got {other:?}"),
+            None => panic!(
+                "Expected feasible N-Queens(4) solution, got status {:?}",
+                outcome.status
+            ),
         }
     }
 }

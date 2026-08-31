@@ -9,9 +9,9 @@
 //! - Pisinger, D., & Ropke, S. (2010). *Large Neighborhood Search*. Handbook of Metaheuristics, Springer, 399-419.
 
 use crate::model::variable::VariableId;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
-use crate::solver::{SolveResult, SolverOptions, check_abort};
+use crate::solver::{SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort};
 use std::time::Instant;
 
 /// Large Neighborhood Search solver.
@@ -44,14 +44,12 @@ impl LnsSolver {
     /// # Complexity
     /// Time: O(I * d^K) where I is number of LNS iterations, K is number of destroyed variables.
     /// Space: O(N * d) graph snapshot depth.
-    pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
+    pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         // Step 1: Obtain initial solution via Backtracking solver
-        let initial_res = self.repair_solver.solve(graph, options);
-        let (mut current_assignment, current_score) = match initial_res {
-            SolveResult::Feasible {
-                assignment, score, ..
-            } => (assignment, score),
-            other => return other,
+        let initial_outcome = self.repair_solver.solve(graph, options);
+        let (mut current_assignment, current_score) = match initial_outcome.solution {
+            Some(Solution { assignment, score }) => (assignment, score),
+            None => return initial_outcome,
         };
 
         let mut best_assignment = current_assignment.clone();
@@ -63,19 +61,28 @@ impl LnsSolver {
         let vars: Vec<VariableId> = graph.variables().keys().copied().collect();
         if vars.is_empty() {
             // No variables to destroy/repair; the initial solution is already optimal.
-            return SolveResult::Feasible {
-                assignment: best_assignment,
-                score: best_score,
-                proven_optimal: false,
+            let statistics = SearchStatistics {
+                nodes_expanded: 0,
+                elapsed: start_time.elapsed(),
             };
+            return SolveOutcome::feasible(
+                Solution {
+                    assignment: best_assignment,
+                    score: best_score,
+                },
+                statistics,
+                None,
+            );
         }
         let n_destroy = ((vars.len() as f64) * self.destroy_fraction).max(1.0) as usize;
 
         while check_abort(options, start_time, lns_step).is_none() {
             lns_step += 1;
 
-            // Destroy phase: Freeze (1 - destroy_fraction) variables, unassign the remaining
-            let mut sub_graph = graph.clone();
+            // Destroy phase: Freeze (1 - destroy_fraction) variables, unassign the remaining.
+            // A search-internal derivative of an already-validated graph, so it is re-wrapped
+            // via `assume_valid` below rather than re-running `validate`.
+            let mut sub_graph = graph.graph().clone();
             let mut sub_domains = sub_graph.domains().clone();
 
             let destroy_offset = (lns_step as usize) % vars.len();
@@ -92,6 +99,7 @@ impl LnsSolver {
             }
 
             *sub_graph.domains_mut() = sub_domains;
+            let sub_graph = ValidatedGraph::assume_valid(sub_graph);
 
             // Repair phase: Solve sub-problem via Backtracking solver
             let repair_options = SolverOptions {
@@ -102,10 +110,8 @@ impl LnsSolver {
                 cancellation_token: options.cancellation_token.clone(),
             };
 
-            let repair_res = self.repair_solver.solve(&sub_graph, &repair_options);
-            if let SolveResult::Feasible {
-                assignment, score, ..
-            } = repair_res
+            let repair_outcome = self.repair_solver.solve(&sub_graph, &repair_options);
+            if let Some(Solution { assignment, score }) = repair_outcome.solution
                 && score > best_score
             {
                 best_score = score;
@@ -114,11 +120,18 @@ impl LnsSolver {
             }
         }
 
-        SolveResult::Feasible {
-            assignment: best_assignment,
-            score: best_score,
-            proven_optimal: false,
-        }
+        let statistics = SearchStatistics {
+            nodes_expanded: lns_step,
+            elapsed: start_time.elapsed(),
+        };
+        SolveOutcome::feasible(
+            Solution {
+                assignment: best_assignment,
+                score: best_score,
+            },
+            statistics,
+            None,
+        )
     }
 }
 
@@ -131,9 +144,9 @@ mod tests {
     fn test_solve_empty_graph_does_not_panic() {
         // Regression test: a graph with zero variables must not panic (division by zero
         // in the destroy-phase modulo) and should return the trivially feasible solution.
-        let graph = ConstraintGraph::new();
+        let graph = ConstraintGraph::new().finalize().unwrap();
         let solver = LnsSolver::default();
-        let res = solver.solve(&graph, &SolverOptions::default());
-        assert!(matches!(res, SolveResult::Feasible { .. }));
+        let outcome = solver.solve(&graph, &SolverOptions::default());
+        assert!(outcome.solution.is_some());
     }
 }

@@ -7,15 +7,15 @@
 //! - Gomes, C. P., & Selman, B. (2001). *Algorithm portfolios*. Artificial Intelligence, 126(1-2), 43-62.
 //! - Hamadi, Y., & Sais, L. (2009). *ManySAT: a parallel SAT solver*. JSAT, 6(4), 245-262.
 
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
 use crate::solver::cancellation::CancellationToken;
 use crate::solver::lns::LnsSolver;
 use crate::solver::local_search::LocalSearchSolver;
-use crate::solver::{AbortReason, SolveResult, SolverOptions};
+use crate::solver::{AbortReason, SearchStatistics, SolveOutcome, SolveStatus, SolverOptions};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Parallel portfolio search manager.
 #[derive(Debug, Default)]
@@ -38,7 +38,8 @@ impl ParallelSolver {
     /// # Complexity
     /// Time: Min time across all parallel search strategies.
     /// Space: O(P * N * D) where P is thread count.
-    pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
+    pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
+        let start_time = Instant::now();
         let (tx, rx) = mpsc::channel();
 
         // Coordinates worker shutdown internally; the caller's own token (if any) is observed
@@ -85,17 +86,19 @@ impl ParallelSolver {
         // Wait for the first feasible result, or until every worker has reported.
         let mut responses_count = 0;
         let mut proven_infeasible = false;
+        let mut nodes_expanded = 0u64;
 
         while responses_count < 3 {
-            if let Ok(result) = rx.recv_timeout(Duration::from_millis(50)) {
+            if let Ok(outcome) = rx.recv_timeout(Duration::from_millis(50)) {
                 responses_count += 1;
-                match result {
-                    SolveResult::Feasible { .. } => {
+                nodes_expanded = nodes_expanded.saturating_add(outcome.statistics.nodes_expanded);
+                match outcome.status {
+                    SolveStatus::Optimal | SolveStatus::Feasible => {
                         internal_token.cancel();
-                        return result;
+                        return outcome;
                     }
-                    SolveResult::Infeasible => proven_infeasible = true,
-                    SolveResult::Aborted { .. } => {}
+                    SolveStatus::Infeasible => proven_infeasible = true,
+                    SolveStatus::Aborted(_) => {}
                 }
             } else if options
                 .cancellation_token
@@ -107,23 +110,23 @@ impl ParallelSolver {
         }
 
         internal_token.cancel();
+        let statistics = SearchStatistics {
+            nodes_expanded,
+            elapsed: start_time.elapsed(),
+        };
 
         if proven_infeasible {
             // At least one complete solver (Backtracking, or LNS/Local Search's own immediate
             // empty-domain check) exhaustively proved unsatisfiability.
-            SolveResult::Infeasible
+            SolveOutcome::infeasible(statistics)
         } else if options
             .cancellation_token
             .as_ref()
             .is_some_and(CancellationToken::is_cancelled)
         {
-            SolveResult::Aborted {
-                reason: AbortReason::Cancelled,
-            }
+            SolveOutcome::aborted(AbortReason::Cancelled, statistics)
         } else {
-            SolveResult::Aborted {
-                reason: AbortReason::Timeout,
-            }
+            SolveOutcome::aborted(AbortReason::Timeout, statistics)
         }
     }
 }

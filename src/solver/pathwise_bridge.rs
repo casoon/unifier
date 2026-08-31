@@ -6,7 +6,7 @@
 //! - `pathwise::core::problem::{Problem, OptimizationProblem}`.
 
 use crate::model::variable::VariableId;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
 use pathwise::core::problem::{OptimizationProblem, Problem};
 use std::collections::HashMap;
@@ -29,13 +29,13 @@ pub type Move = (VariableId, i64);
 /// [`crate::solver::BacktrackingSolver`].
 #[derive(Debug, Clone)]
 pub struct UnifierProblemAdapter<'a> {
-    graph: &'a ConstraintGraph,
+    graph: &'a ValidatedGraph,
     score_calculator: ScoreCalculator,
 }
 
 impl<'a> UnifierProblemAdapter<'a> {
-    /// Creates a pathwise search adapter for the given constraint graph.
-    pub fn new(graph: &'a ConstraintGraph) -> Self {
+    /// Creates a pathwise search adapter for the given, already-validated constraint graph.
+    pub fn new(graph: &'a ValidatedGraph) -> Self {
         Self {
             graph,
             score_calculator: ScoreCalculator,
@@ -52,7 +52,7 @@ impl<'a> UnifierProblemAdapter<'a> {
 
     /// Returns a reference to the underlying constraint graph.
     pub fn graph(&self) -> &'a ConstraintGraph {
-        self.graph
+        self.graph.graph()
     }
 
     /// Returns the lowest-ID variable not yet present in `state`, or `None` if `state` is

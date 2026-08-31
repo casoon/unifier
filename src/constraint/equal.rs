@@ -43,7 +43,7 @@ impl Constraint for Equal {
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         compare_assigned(assignment, self.v1, self.v2, |val1, val2| {
-            val1 == val2 + self.offset
+            val1 == val2.saturating_add(self.offset)
         })
     }
 
@@ -57,8 +57,8 @@ impl Constraint for Equal {
 
         // Prune v1 domain bounds based on v2 + offset
         if let Some(result) = prune(domains, &mut changed, self.v1, |d| {
-            let below = d.remove_below(min2 + self.offset);
-            let above = d.remove_above(max2 + self.offset);
+            let below = d.remove_below(min2.saturating_add(self.offset));
+            let above = d.remove_above(max2.saturating_add(self.offset));
             below || above
         }) {
             return result;
@@ -71,8 +71,8 @@ impl Constraint for Equal {
 
         // Prune v2 domain bounds based on v1 - offset
         if let Some(result) = prune(domains, &mut changed, self.v2, |d| {
-            let below = d.remove_below(min1 - self.offset);
-            let above = d.remove_above(max1 - self.offset);
+            let below = d.remove_below(min1.saturating_sub(self.offset));
+            let above = d.remove_above(max1.saturating_sub(self.offset));
             below || above
         }) {
             return result;

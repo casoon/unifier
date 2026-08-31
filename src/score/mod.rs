@@ -141,8 +141,12 @@ impl Objective for WeightedSum {
     }
 
     fn evaluate(&self, assignment: &HashMap<VariableId, i64>) -> i64 {
-        let sum: i64 = self.vars.iter().filter_map(|v| assignment.get(v)).sum();
-        self.weight * sum
+        let sum = self
+            .vars
+            .iter()
+            .filter_map(|v| assignment.get(v))
+            .fold(0i64, |acc, &v| acc.saturating_add(v));
+        self.weight.saturating_mul(sum)
     }
 
     fn optimistic_bound(&self, domains: &HashMap<VariableId, Domain>) -> i64 {
@@ -157,8 +161,9 @@ impl Objective for WeightedSum {
                 }
                 _ => 0,
             })
-            .map(|v| self.weight * v)
-            .sum()
+            .fold(0i64, |acc, v| {
+                acc.saturating_add(self.weight.saturating_mul(v))
+            })
     }
 }
 
@@ -197,10 +202,13 @@ impl ScoreCalculator {
     /// Computes an optimistic (upper-bound) score reachable from a partial `assignment` given the
     /// current `domains`, for Branch & Bound pruning.
     ///
-    /// The `hard` component reuses [`Self::calculate_score`]'s partial-assignment hard score: since
-    /// every built-in constraint treats a not-yet-fully-assigned scope as not-yet-violated, hard
-    /// violations can only be discovered as the assignment is completed, so the partial value is
-    /// itself a valid upper bound (never smaller in magnitude than the true final `hard`).
+    /// The `hard` component sums each constraint's `is_satisfiable` (see
+    /// [`crate::constraint::Constraint::is_satisfiable`]) over `domains`:
+    /// `0` while a constraint might still be satisfiable, `-1` only once it is *provably* not.
+    /// This is deliberately not just `calculate_score`'s partial-assignment hard score — some
+    /// constraints (`ExactlyOne`, `AtLeast`) are `false` on a partial assignment that has not
+    /// *yet* reached their target but still could, and treating that as an already-realized
+    /// violation would make this bound unsound (it could prune a still-winnable subtree).
     ///
     /// # Complexity
     /// Time: O(C + O) where C is number of constraints, O is number of objective terms in graph.
@@ -210,13 +218,23 @@ impl ScoreCalculator {
         domains: &HashMap<VariableId, Domain>,
         assignment: &HashMap<VariableId, i64>,
     ) -> HardSoftScore {
-        let partial = self.calculate_score(graph, assignment);
+        let hard: i64 = graph
+            .constraints()
+            .iter()
+            .map(|c| {
+                if c.is_satisfiable(domains, assignment) {
+                    0
+                } else {
+                    -1
+                }
+            })
+            .sum();
         let soft_bound: i64 = graph
             .objectives()
             .iter()
             .map(|o| o.optimistic_bound(domains))
             .sum();
-        HardSoftScore::new(partial.hard, soft_bound)
+        HardSoftScore::new(hard, soft_bound)
     }
 
     /// Incrementally updates a score when `changed_var` is modified, re-evaluating only affected
@@ -251,14 +269,16 @@ impl ScoreCalculator {
         let mut soft_delta: i64 = 0;
         for objective in graph.objectives() {
             if objective.scope().contains(&changed_var) {
-                soft_delta +=
-                    objective.evaluate(new_assignment) - objective.evaluate(old_assignment);
+                let delta = objective
+                    .evaluate(new_assignment)
+                    .saturating_sub(objective.evaluate(old_assignment));
+                soft_delta = soft_delta.saturating_add(delta);
             }
         }
 
         HardSoftScore::new(
-            current_score.hard + hard_delta,
-            current_score.soft + soft_delta,
+            current_score.hard.saturating_add(hard_delta),
+            current_score.soft.saturating_add(soft_delta),
         )
     }
 }

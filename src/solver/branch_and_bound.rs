@@ -11,9 +11,12 @@ use crate::constraint::PropagationResult;
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
-use crate::solver::{AbortReason, SolveResult, SolverOptions, check_abort, select_mrv_variable};
+use crate::solver::{
+    AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+    select_mrv_variable,
+};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -43,15 +46,17 @@ impl BranchAndBoundSolver {
 
     /// Solves the COP problem, exploring the search space for the best feasible solution.
     ///
-    /// The returned [`SolveResult::Feasible::proven_optimal`] is `true` only if the search space
+    /// The returned status is [`crate::solver::SolveStatus::Optimal`] only if the search space
     /// was exhaustively explored or bound-pruned without being aborted by a time/node limit or
-    /// cancellation — see `search` below.
+    /// cancellation — see `search` below. `outcome.bound` is the root node's optimistic bound,
+    /// computed once before branching; it stays loose (not tightened during search) but is always
+    /// a valid upper bound on the achievable soft score.
     ///
     /// # Complexity
     /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`])
     /// and MRV variable ordering.
     /// Space: O(n * d) recursion stack depth.
-    pub fn solve(&self, graph: &ConstraintGraph, options: &SolverOptions) -> SolveResult {
+    pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = graph.domains().clone();
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
@@ -62,8 +67,15 @@ impl BranchAndBoundSolver {
 
         if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains)
         {
-            return SolveResult::Infeasible;
+            return SolveOutcome::infeasible(SearchStatistics {
+                nodes_expanded: 0,
+                elapsed: start_time.elapsed(),
+            });
         }
+
+        let root_bound =
+            self.score_calculator
+                .optimistic_score(graph, &current_domains, &assignment);
 
         let exhaustive = self.search(
             graph,
@@ -77,18 +89,26 @@ impl BranchAndBoundSolver {
                 best_score: &mut best_score,
             },
         );
+        let statistics = SearchStatistics {
+            nodes_expanded: nodes_count,
+            elapsed: start_time.elapsed(),
+        };
 
         match (best_solution, best_score) {
-            (Some(assignment), Some(score)) => SolveResult::Feasible {
-                assignment,
-                score,
-                proven_optimal: exhaustive,
-            },
-            _ if exhaustive => SolveResult::Infeasible,
+            (Some(assignment), Some(score)) => {
+                let solution = Solution { assignment, score };
+                if exhaustive {
+                    // Proven optimal: the bound and the achieved score coincide (gap = 0).
+                    SolveOutcome::optimal(solution, statistics, Some(score))
+                } else {
+                    SolveOutcome::feasible(solution, statistics, Some(root_bound))
+                }
+            }
+            _ if exhaustive => SolveOutcome::infeasible(statistics),
             _ => {
                 let reason =
                     check_abort(options, start_time, nodes_count).unwrap_or(AbortReason::Timeout);
-                SolveResult::Aborted { reason }
+                SolveOutcome::aborted(reason, statistics)
             }
         }
     }
@@ -168,5 +188,55 @@ impl BranchAndBoundSolver {
         }
 
         exhaustive
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constraint::ExactlyOne;
+    use crate::score::WeightedSum;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_exactly_one_partial_hard_bound_does_not_falsely_prune_optimum() {
+        // Regression test for plan/09-project-reevaluation-roadmap.md, P0: `ExactlyOne` is
+        // `false` on a partial assignment with zero hits so far, even though a later assignment
+        // could still satisfy it. A naive optimistic hard bound derived from that partial
+        // `is_satisfied` check would wrongly treat a still-winnable branch as already violated
+        // and prune it, missing the true optimum.
+        //
+        // x in 0..=1, y in 0..=2, ExactlyOne([x, y], target=0), maximize(x).
+        // True optimum: x=1, y=0, soft=1. A broken bound reproducibly returned x=0, y=1, soft=0,
+        // falsely marked `proven_optimal: true`.
+        let mut graph = ConstraintGraph::new();
+        let x = VariableId(0);
+        let y = VariableId(1);
+        graph.add_variable(
+            crate::model::variable::Variable::new(x, "x"),
+            Domain::range(0, 1),
+        );
+        graph.add_variable(
+            crate::model::variable::Variable::new(y, "y"),
+            Domain::range(0, 2),
+        );
+        graph.add_constraint(Arc::new(ExactlyOne::new([x, y], 0)));
+        graph.add_objective(Arc::new(WeightedSum::new([x], 1)));
+        let graph = graph.finalize().unwrap();
+
+        let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
+        assert_eq!(
+            outcome.status,
+            crate::solver::SolveStatus::Optimal,
+            "should prove optimality on such a tiny instance"
+        );
+        let solution = outcome.solution.expect("Optimal status implies a solution");
+        assert_eq!(
+            solution.score,
+            HardSoftScore::new(0, 1),
+            "true optimum is x=1,y=0 with soft=1"
+        );
+        assert_eq!(solution.assignment[&x], 1);
+        assert_eq!(solution.assignment[&y], 0);
     }
 }

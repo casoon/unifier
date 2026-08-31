@@ -13,7 +13,7 @@ use crate::model::group::{Group, GroupId};
 use crate::model::interval::{DurationSpec, Interval};
 use crate::model::resource::{Resource, ResourceId};
 use crate::model::variable::{Variable, VariableId};
-use crate::propagation::graph::{ConstraintGraph, ModelError};
+use crate::propagation::graph::{ConstraintGraph, ModelError, ValidatedGraph};
 use crate::score::{Objective, WeightedSum};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
@@ -62,8 +62,11 @@ impl ModelBuilder {
         let interval = Interval::new(start, DurationSpec::Fixed(duration), end);
 
         // Enforce implicit end = start + duration constraint
-        self.graph
-            .add_constraint(Arc::new(Equal::new(end, start, duration as i64)));
+        self.graph.add_constraint(Arc::new(Equal::new(
+            end,
+            start,
+            crate::constraint::duration_as_i64(duration),
+        )));
 
         interval
     }
@@ -195,15 +198,16 @@ impl ModelBuilder {
 
     /// Adds a soft objective minimizing `sum(vars) * weight` (`weight` must be positive).
     pub fn add_minimize(&mut self, vars: impl IntoIterator<Item = VariableId>, weight: i64) {
+        // `saturating_neg`: `weight == i64::MIN` has no representable negation.
         self.graph
-            .add_objective(Arc::new(WeightedSum::new(vars, -weight)));
+            .add_objective(Arc::new(WeightedSum::new(vars, weight.saturating_neg())));
     }
 
-    /// Consumes the builder, validates the model, and returns the constructed [`ConstraintGraph`].
+    /// Consumes the builder, validates the model, and returns a [`ValidatedGraph`] that public
+    /// solvers accept.
     ///
     /// See [`ConstraintGraph::validate`] for what is checked.
-    pub fn build(self) -> Result<ConstraintGraph, Vec<ModelError>> {
-        self.graph.validate()?;
-        Ok(self.graph)
+    pub fn build(self) -> Result<ValidatedGraph, Vec<ModelError>> {
+        self.graph.finalize()
     }
 }

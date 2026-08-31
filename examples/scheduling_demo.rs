@@ -5,7 +5,7 @@
 
 use unifier::constraint::TaskDemand;
 use unifier::dsl::ModelBuilder;
-use unifier::solver::{ParallelSolver, SolveResult, SolverOptions};
+use unifier::solver::{ParallelSolver, SolveStatus, SolverOptions};
 
 fn main() {
     println!("=== Unifier CSP/COP Scheduling Demo ===");
@@ -56,22 +56,30 @@ fn main() {
     let solver = ParallelSolver::new();
     let options = SolverOptions::default();
 
-    match solver.solve(&graph, &options) {
-        SolveResult::Feasible {
-            assignment, score, ..
-        } => {
+    let outcome = solver.solve(&graph, &options);
+    match (outcome.status, outcome.solution) {
+        (SolveStatus::Optimal | SolveStatus::Feasible, Some(solution)) => {
             println!("✅ Feasible Schedule Found!");
-            println!("Score: {}", score);
+            println!("Score: {}", solution.score);
             println!("Schedule Assignment:");
-            println!("  Math start: Slot {}", assignment[&math_start]);
-            println!("  Physics start: Slot {}", assignment[&physics_start]);
-            println!("  Chemistry start: Slot {}", assignment[&chemistry_start]);
+            println!("  Math start: Slot {}", solution.assignment[&math_start]);
+            println!(
+                "  Physics start: Slot {}",
+                solution.assignment[&physics_start]
+            );
+            println!(
+                "  Chemistry start: Slot {}",
+                solution.assignment[&chemistry_start]
+            );
         }
-        SolveResult::Infeasible => {
+        (SolveStatus::Infeasible, _) => {
             println!("❌ Problem is Infeasible");
         }
-        SolveResult::Aborted { reason } => {
+        (SolveStatus::Aborted(reason), _) => {
             println!("⏰ Search Aborted ({reason:?})");
+        }
+        (status, None) => {
+            println!("⚠️ Unexpected outcome: {status:?} without a solution");
         }
     }
 }

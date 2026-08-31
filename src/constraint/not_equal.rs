@@ -53,7 +53,7 @@ impl Constraint for NotEqual {
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         compare_assigned(assignment, self.v1, self.v2, |val1, val2| {
-            val1 != val2 + self.offset
+            val1 != val2.saturating_add(self.offset)
         })
     }
 
@@ -66,7 +66,7 @@ impl Constraint for NotEqual {
             .filter(|d| d.len() == 1)
             .and_then(Domain::min)
             && let Some(result) = prune(domains, &mut changed, self.v2, |d| {
-                d.remove(val1 - self.offset)
+                d.remove(val1.saturating_sub(self.offset))
             })
         {
             return result;
@@ -78,7 +78,7 @@ impl Constraint for NotEqual {
             .filter(|d| d.len() == 1)
             .and_then(Domain::min)
             && let Some(result) = prune(domains, &mut changed, self.v1, |d| {
-                d.remove(val2 + self.offset)
+                d.remove(val2.saturating_add(self.offset))
             })
         {
             return result;

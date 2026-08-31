@@ -73,6 +73,30 @@ pub trait Constraint: Debug + Send + Sync {
     fn validate(&self) -> Result<(), String> {
         Ok(())
     }
+
+    /// Returns `false` only if this constraint can *provably* never be satisfied by any
+    /// completion consistent with the current `domains`, regardless of how the as-yet-unassigned
+    /// variables in its scope are eventually assigned.
+    ///
+    /// Used by [`crate::solver::BranchAndBoundSolver`] (via
+    /// [`crate::score::ScoreCalculator::optimistic_score`]) as an admissible hard-score bound for
+    /// pruning: returning `false` here marks a search subtree as unable to ever become feasible,
+    /// so it must never be `false` merely because the constraint isn't satisfied *yet*.
+    ///
+    /// The default implementation delegates to [`Self::is_satisfied`] on `assignment`, which is
+    /// correct for constraints where a violation detected from a partial assignment can never be
+    /// resolved by completing it further (true for e.g. `Equal`, `NotEqual`, `AllDifferent`,
+    /// `AtMost` — once violated, permanently violated). Constraints whose satisfiability
+    /// genuinely depends on still-unassigned variables (e.g. `ExactlyOne`, `AtLeast`, which can
+    /// still reach their target count later) MUST override this using `domains` instead.
+    fn is_satisfiable(
+        &self,
+        domains: &HashMap<VariableId, Domain>,
+        assignment: &HashMap<VariableId, i64>,
+    ) -> bool {
+        let _ = domains;
+        self.is_satisfied(assignment)
+    }
 }
 
 /// Evaluates a binary comparator over two assigned variables.
@@ -150,4 +174,14 @@ pub(crate) fn prune(
         return Some(PropagationResult::Conflict);
     }
     None
+}
+
+/// Converts a `u64` duration to `i64` for arithmetic with `i64`-typed domain values, saturating
+/// to `i64::MAX` instead of wrapping/panicking for durations exceeding `i64::MAX` (unrealistic in
+/// practice, but not excluded by the `u64` type).
+///
+/// # Complexity
+/// Time & Space: O(1).
+pub(crate) fn duration_as_i64(duration: u64) -> i64 {
+    i64::try_from(duration).unwrap_or(i64::MAX)
 }

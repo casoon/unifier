@@ -1,9 +1,11 @@
 //! Integration tests for unifier CSP/COP modeling and solvers.
 //!
-//! Beyond happy-path solver checks, this file covers what `plan/08-project-evaluation.md`
-//! flagged as missing: proven-unsatisfiable models, timeout/cancellation semantics, invalid
-//! graph validation, i64/u64 boundary values, a brute-force oracle for differential testing,
-//! and an optimality (not just feasibility) proof via Branch & Bound.
+//! Beyond happy-path solver checks, this file covers what
+//! `plan/08-project-evaluation.md` and `plan/09-project-reevaluation-roadmap.md` flagged as
+//! missing: proven-unsatisfiable models, timeout/cancellation semantics, invalid graph
+//! validation, i64/u64 boundary values, a brute-force oracle for differential testing, and
+//! optimality (not just feasibility) proofs via Branch & Bound — including the specific
+//! partial-cardinality-constraint case that previously produced a false optimality proof.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,14 +16,14 @@ use unifier::propagation::ModelError;
 use unifier::score::{HardSoftScore, ScoreCalculator};
 use unifier::solver::{
     AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,
-    LocalSearchSolver, ParallelSolver, SolveResult, SolverOptions,
+    LocalSearchSolver, ParallelSolver, SolveStatus, SolverOptions,
 };
-use unifier::{ConstraintGraph, Domain, Variable, VariableId};
+use unifier::{ConstraintGraph, Domain, ValidatedGraph, Variable, VariableId};
 
 /// Builds an N-Queens board: `vars[row]` holds the column of the queen in that row (1-indexed).
 /// Enforces column distinctness (`AllDifferent`) and diagonal distinctness (`NotEqual` with the
 /// row-distance offset in both directions).
-fn build_nqueens_graph(n: i64) -> ConstraintGraph {
+fn build_nqueens_graph(n: i64) -> ValidatedGraph {
     let mut builder = ModelBuilder::new();
     let vars: Vec<VariableId> = (0..n)
         .map(|i| builder.new_var(format!("q{i}"), 1..=n))
@@ -92,16 +94,17 @@ fn brute_force_best(graph: &ConstraintGraph) -> Option<HardSoftScore> {
 fn test_dsl_nqueens_4() {
     let graph = build_nqueens_graph(4);
     let solver = BacktrackingSolver::new();
-    let res = solver.solve(&graph, &SolverOptions::default());
+    let outcome = solver.solve(&graph, &SolverOptions::default());
 
-    match res {
-        SolveResult::Feasible {
-            assignment, score, ..
-        } => {
-            assert!(score.is_feasible());
-            assert_eq!(assignment.len(), 4);
+    match outcome.solution {
+        Some(solution) => {
+            assert!(solution.score.is_feasible());
+            assert_eq!(solution.assignment.len(), 4);
         }
-        other => panic!("Expected feasible solution for N-Queens(4), got {other:?}"),
+        None => panic!(
+            "Expected feasible solution for N-Queens(4), got status {:?}",
+            outcome.status
+        ),
     }
 }
 
@@ -115,7 +118,7 @@ fn test_nqueens_3_is_infeasible() {
         "oracle: N-Queens(3) must be unsatisfiable"
     );
 
-    for (name, result) in [
+    for (name, outcome) in [
         (
             "Backtracking",
             BacktrackingSolver::new().solve(&graph, &SolverOptions::default()),
@@ -130,10 +133,11 @@ fn test_nqueens_3_is_infeasible() {
         ),
     ] {
         assert_eq!(
-            result,
-            SolveResult::Infeasible,
+            outcome.status,
+            SolveStatus::Infeasible,
             "{name} should prove N-Queens(3) infeasible"
         );
+        assert!(outcome.solution.is_none());
     }
 }
 
@@ -143,12 +147,13 @@ fn test_backtracking_matches_oracle_on_nqueens_4() {
     let oracle = brute_force_best(&graph);
     assert!(oracle.is_some(), "oracle: N-Queens(4) is satisfiable");
 
-    let result = BacktrackingSolver::new().solve(&graph, &SolverOptions::default());
-    match result {
-        SolveResult::Feasible { score, .. } => assert!(score.is_feasible()),
-        other => {
-            panic!("Backtracking disagrees with oracle: got {other:?}, oracle found a solution")
-        }
+    let outcome = BacktrackingSolver::new().solve(&graph, &SolverOptions::default());
+    match outcome.solution {
+        Some(solution) => assert!(solution.score.is_feasible()),
+        None => panic!(
+            "Backtracking disagrees with oracle: got status {:?}, oracle found a solution",
+            outcome.status
+        ),
     }
 }
 
@@ -184,19 +189,20 @@ fn test_timetabling_no_overlap_and_cumulative() {
 
     let graph = builder.build().expect("model should validate");
     let solver = BranchAndBoundSolver::new();
-    let res = solver.solve(&graph, &SolverOptions::default());
+    let outcome = solver.solve(&graph, &SolverOptions::default());
 
-    match res {
-        SolveResult::Feasible {
-            assignment, score, ..
-        } => {
-            assert!(score.is_feasible());
-            let s1 = assignment[&t1_start];
-            let s2 = assignment[&t2_start];
-            let s3 = assignment[&t3_start];
+    match outcome.solution {
+        Some(solution) => {
+            assert!(solution.score.is_feasible());
+            let s1 = solution.assignment[&t1_start];
+            let s2 = solution.assignment[&t2_start];
+            let s3 = solution.assignment[&t3_start];
             assert!(s1 >= 0 && s2 >= 0 && s3 >= 0);
         }
-        other => panic!("Expected feasible timetabling schedule, got {other:?}"),
+        None => panic!(
+            "Expected feasible timetabling schedule, got status {:?}",
+            outcome.status
+        ),
     }
 }
 
@@ -215,20 +221,19 @@ fn test_precedence_and_domain_filtering() {
 
     let graph = builder.build().expect("model should validate");
     let solver = LocalSearchSolver::default();
-    let res = solver.solve(&graph, &SolverOptions::default());
+    let outcome = solver.solve(&graph, &SolverOptions::default());
 
-    match res {
-        SolveResult::Feasible {
-            assignment, score, ..
-        } => {
-            assert!(score.is_feasible());
-            let e1 = assignment[&inv1.end()];
-            let s2 = assignment[&inv2.start()];
+    match outcome.solution {
+        Some(solution) => {
+            assert!(solution.score.is_feasible());
+            let e1 = solution.assignment[&inv1.end()];
+            let s2 = solution.assignment[&inv2.start()];
             assert!(e1 <= s2);
         }
-        other => {
-            panic!("Expected feasible solution under precedence and value filters, got {other:?}")
-        }
+        None => panic!(
+            "Expected feasible solution under precedence and value filters, got status {:?}",
+            outcome.status
+        ),
     }
 }
 
@@ -255,32 +260,31 @@ fn test_lns_solver_and_cardinality() {
         time_limit: Some(Duration::from_millis(300)),
         ..SolverOptions::default()
     };
-    let res = solver.solve(&graph, &options);
+    let outcome = solver.solve(&graph, &options);
 
-    match res {
-        SolveResult::Feasible {
-            assignment, score, ..
-        } => {
-            assert!(score.is_feasible());
+    match outcome.solution {
+        Some(solution) => {
+            assert!(solution.score.is_feasible());
             let count_3 = vars
                 .iter()
-                .filter(|v| assignment.get(v) == Some(&3))
+                .filter(|v| solution.assignment.get(v) == Some(&3))
                 .count();
             assert_eq!(count_3, 1);
             let count_1 = vars
                 .iter()
-                .filter(|v| assignment.get(v) == Some(&1))
+                .filter(|v| solution.assignment.get(v) == Some(&1))
                 .count();
             assert!(count_1 <= 2);
             let count_2 = vars
                 .iter()
-                .filter(|v| assignment.get(v) == Some(&2))
+                .filter(|v| solution.assignment.get(v) == Some(&2))
                 .count();
             assert!(count_2 >= 1);
         }
-        other => {
-            panic!("Expected feasible LNS solution under cardinality constraints, got {other:?}")
-        }
+        None => panic!(
+            "Expected feasible LNS solution under cardinality constraints, got status {:?}",
+            outcome.status
+        ),
     }
 }
 
@@ -300,13 +304,14 @@ fn test_parallel_solver_and_cancellation() {
     };
 
     let solver = ParallelSolver::new();
-    let res = solver.solve(&graph, &options);
+    let outcome = solver.solve(&graph, &options);
 
-    match res {
-        SolveResult::Feasible { score, .. } => {
-            assert!(score.is_feasible());
-        }
-        other => panic!("Expected feasible solution from ParallelSolver, got {other:?}"),
+    match outcome.solution {
+        Some(solution) => assert!(solution.score.is_feasible()),
+        None => panic!(
+            "Expected feasible solution from ParallelSolver, got status {:?}",
+            outcome.status
+        ),
     }
 }
 
@@ -320,10 +325,11 @@ fn test_parallel_solver_does_not_claim_infeasible_when_starved() {
         max_nodes: Some(0),
         cancellation_token: None,
     };
-    let result = ParallelSolver::new().solve(&graph, &options);
+    let outcome = ParallelSolver::new().solve(&graph, &options);
     assert!(
-        matches!(result, SolveResult::Aborted { .. }),
-        "expected Aborted since no worker could prove infeasibility with zero search budget, got {result:?}"
+        matches!(outcome.status, SolveStatus::Aborted(_)),
+        "expected Aborted since no worker could prove infeasibility with zero search budget, got {:?}",
+        outcome.status
     );
 }
 
@@ -335,13 +341,9 @@ fn test_backtracking_aborts_on_node_limit() {
         max_nodes: Some(0),
         cancellation_token: None,
     };
-    let result = BacktrackingSolver::new().solve(&graph, &options);
-    assert_eq!(
-        result,
-        SolveResult::Aborted {
-            reason: AbortReason::NodeLimit
-        }
-    );
+    let outcome = BacktrackingSolver::new().solve(&graph, &options);
+    assert_eq!(outcome.status, SolveStatus::Aborted(AbortReason::NodeLimit));
+    assert!(outcome.solution.is_none());
 }
 
 #[test]
@@ -353,13 +355,8 @@ fn test_backtracking_aborts_on_pre_cancelled_token() {
         cancellation_token: Some(token),
         ..SolverOptions::default()
     };
-    let result = BacktrackingSolver::new().solve(&graph, &options);
-    assert_eq!(
-        result,
-        SolveResult::Aborted {
-            reason: AbortReason::Cancelled
-        }
-    );
+    let outcome = BacktrackingSolver::new().solve(&graph, &options);
+    assert_eq!(outcome.status, SolveStatus::Aborted(AbortReason::Cancelled));
 }
 
 #[test]
@@ -377,24 +374,22 @@ fn test_branch_and_bound_proves_optimum_matches_oracle() {
     let oracle_best = brute_force_best(&graph).expect("feasible by construction");
     assert_eq!(oracle_best, HardSoftScore::new(0, 12));
 
-    let result = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
-    match result {
-        SolveResult::Feasible {
-            score,
-            proven_optimal,
-            ..
-        } => {
-            assert!(
-                proven_optimal,
-                "Branch & Bound should prove optimality for such a small instance"
-            );
-            assert_eq!(
-                score, oracle_best,
-                "Branch & Bound optimum must match the brute-force oracle"
-            );
-        }
-        other => panic!("Expected a proven-optimal feasible solution, got {other:?}"),
-    }
+    let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
+    assert_eq!(
+        outcome.status,
+        SolveStatus::Optimal,
+        "Branch & Bound should prove optimality for such a small instance"
+    );
+    let solution = outcome.solution.expect("Optimal implies a solution");
+    assert_eq!(
+        solution.score, oracle_best,
+        "Branch & Bound optimum must match the brute-force oracle"
+    );
+    assert_eq!(
+        outcome.bound,
+        Some(oracle_best),
+        "proven optimum: bound must equal the achieved score"
+    );
 }
 
 #[test]
@@ -410,18 +405,10 @@ fn test_branch_and_bound_minimize_matches_oracle() {
     let oracle_best = brute_force_best(&graph).expect("feasible by construction");
     assert_eq!(oracle_best, HardSoftScore::new(0, -6)); // minimizing sum(vars) => picks {1,2,3}
 
-    let result = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
-    match result {
-        SolveResult::Feasible {
-            score,
-            proven_optimal,
-            ..
-        } => {
-            assert!(proven_optimal);
-            assert_eq!(score, oracle_best);
-        }
-        other => panic!("Expected a proven-optimal feasible solution, got {other:?}"),
-    }
+    let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
+    assert_eq!(outcome.status, SolveStatus::Optimal);
+    let solution = outcome.solution.expect("Optimal implies a solution");
+    assert_eq!(solution.score, oracle_best);
 }
 
 #[test]
@@ -439,16 +426,42 @@ fn test_branch_and_bound_not_proven_optimal_when_node_starved() {
         max_nodes: Some(3),
         cancellation_token: None,
     };
-    match BranchAndBoundSolver::new().solve(&graph, &options) {
-        SolveResult::Feasible { proven_optimal, .. } => {
-            assert!(
-                !proven_optimal,
-                "3 search nodes cannot exhaust a 6-variable AllDifferent tree"
-            );
-        }
-        SolveResult::Aborted { .. } => {} // also acceptable: no feasible solution found within budget
-        other => panic!("Expected Feasible(not proven optimal) or Aborted, got {other:?}"),
+    let outcome = BranchAndBoundSolver::new().solve(&graph, &options);
+    match outcome.status {
+        SolveStatus::Feasible => {}
+        SolveStatus::Aborted(_) => {} // also acceptable: no feasible solution found within budget
+        other => panic!("Expected Feasible (not proven optimal) or Aborted, got {other:?}"),
     }
+    assert_ne!(
+        outcome.status,
+        SolveStatus::Optimal,
+        "3 search nodes cannot exhaust a 6-variable AllDifferent tree"
+    );
+}
+
+#[test]
+fn test_exactly_one_partial_cardinality_optimality_matches_oracle() {
+    // Integration-level regression test for plan/09-project-reevaluation-roadmap.md P0
+    // (unit-level version lives in src/solver/branch_and_bound.rs): a naive optimistic hard
+    // bound derived from `ExactlyOne::is_satisfied` on a partial assignment would prune a
+    // still-winnable branch, since `ExactlyOne` is `false` before any hit even though a later
+    // assignment could still satisfy it.
+    let mut builder = ModelBuilder::new();
+    let x = builder.new_var("x", 0..=1);
+    let y = builder.new_var("y", 0..=2);
+    builder.add_exactly_one(vec![x, y], 0);
+    builder.add_maximize(vec![x], 1);
+    let graph = builder.build().expect("model should validate");
+
+    let oracle_best = brute_force_best(&graph).expect("feasible: x=1,y=0 satisfies ExactlyOne");
+    assert_eq!(oracle_best, HardSoftScore::new(0, 1));
+
+    let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
+    assert_eq!(outcome.status, SolveStatus::Optimal);
+    let solution = outcome.solution.expect("Optimal implies a solution");
+    assert_eq!(solution.score, oracle_best);
+    assert_eq!(solution.assignment[&x], 1);
+    assert_eq!(solution.assignment[&y], 0);
 }
 
 #[test]
@@ -468,6 +481,7 @@ fn test_validate_rejects_unknown_variable() {
             .any(|e| matches!(e, ModelError::UnknownVariable { var, .. } if *var == unknown)),
         "expected UnknownVariable({unknown:?}) among {errors:?}"
     );
+    assert!(graph.finalize().is_err());
 }
 
 #[test]
