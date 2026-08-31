@@ -121,29 +121,34 @@ impl Constraint for ExactlyOne {
             return PropagationResult::Conflict;
         }
 
-        // If one variable is fixed to target_value, prune target_value from all other variables
+        // If one variable is fixed to target_value, prune target_value from all other variables.
+        // Uses `mutate` rather than `get_mut` so scanning the whole scope doesn't record a trail
+        // entry for variables that don't contain target_value in the first place.
         if let Some(fixed_var) = fixed_target_var {
             for &var_id in &self.scope {
-                if var_id != fixed_var
-                    && let Some(d) = domains.get_mut(&var_id)
+                if var_id == fixed_var {
+                    continue;
+                }
+                if domains
+                    .mutate(var_id, |d| d.remove(self.target_value))
+                    .unwrap_or(false)
                 {
-                    if d.remove(self.target_value) {
-                        changed = true;
-                    }
-                    if d.is_empty() {
-                        return PropagationResult::Conflict;
-                    }
+                    changed = true;
+                }
+                if domains.get(&var_id).is_some_and(|d| d.is_empty()) {
+                    return PropagationResult::Conflict;
                 }
             }
         } else if possible_count == 1 {
             // Only one variable CAN take target_value -> force it to take target_value
-            if let Some(only_var) = last_possible_var
-                && let Some(d) = domains.get_mut(&only_var)
-            {
-                if d.assign(self.target_value) {
+            if let Some(only_var) = last_possible_var {
+                if domains
+                    .mutate(only_var, |d| d.assign(self.target_value))
+                    .unwrap_or(false)
+                {
                     changed = true;
                 }
-                if d.is_empty() {
+                if domains.get(&only_var).is_some_and(|d| d.is_empty()) {
                     return PropagationResult::Conflict;
                 }
             }
@@ -207,18 +212,22 @@ impl Constraint for AtMost {
         }
 
         if fixed_count == self.k {
-            // Prune target_value from all unassigned variables
+            // Prune target_value from all unassigned variables.
             for &var_id in &self.scope {
-                if let Some(d) = domains.get_mut(&var_id)
-                    && d.len() > 1
-                    && d.contains(self.target_value)
+                if !domains
+                    .get(&var_id)
+                    .is_some_and(|d| d.len() > 1 && d.contains(self.target_value))
                 {
-                    if d.remove(self.target_value) {
-                        changed = true;
-                    }
-                    if d.is_empty() {
-                        return PropagationResult::Conflict;
-                    }
+                    continue;
+                }
+                if domains
+                    .mutate(var_id, |d| d.remove(self.target_value))
+                    .unwrap_or(false)
+                {
+                    changed = true;
+                }
+                if domains.get(&var_id).is_some_and(|d| d.is_empty()) {
+                    return PropagationResult::Conflict;
                 }
             }
         }
@@ -291,15 +300,18 @@ impl Constraint for AtLeast {
         }
 
         if possible_vars.len() == self.k {
-            // Force all possible variables to take target_value
+            // Force all possible variables to take target_value. Many may already be fixed to it
+            // (from an earlier propagation round), in which case `assign` is a no-op — `mutate`
+            // then records no trail entry for those.
             for var_id in possible_vars {
-                if let Some(d) = domains.get_mut(&var_id) {
-                    if d.assign(self.target_value) {
-                        changed = true;
-                    }
-                    if d.is_empty() {
-                        return PropagationResult::Conflict;
-                    }
+                if domains
+                    .mutate(var_id, |d| d.assign(self.target_value))
+                    .unwrap_or(false)
+                {
+                    changed = true;
+                }
+                if domains.get(&var_id).is_some_and(|d| d.is_empty()) {
+                    return PropagationResult::Conflict;
                 }
             }
         }

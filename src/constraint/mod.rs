@@ -170,11 +170,10 @@ pub(crate) fn prune(
     var: VariableId,
     narrow: impl FnOnce(&mut Domain) -> bool,
 ) -> Option<PropagationResult> {
-    let d = domains.get_mut(&var)?;
-    if narrow(d) {
+    if domains.mutate(var, narrow)? {
         *changed = true;
     }
-    if d.is_empty() {
+    if domains.get(&var)?.is_empty() {
         return Some(PropagationResult::Conflict);
     }
     None

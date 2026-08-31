@@ -68,19 +68,29 @@ impl Constraint for AllDifferent {
             return PropagationResult::Success { changed: false };
         }
 
-        // Prune fixed values from all non-fixed variables in scope
-        for var in &self.scope {
-            if let Some(domain) = domains.get_mut(var)
-                && domain.len() > 1
-            {
-                for &val in &fixed_values {
-                    if domain.remove(val) {
-                        changed = true;
+        // Prune fixed values from all non-fixed variables in scope. Uses `mutate` rather than
+        // `get_mut` so scanning every scope variable doesn't record a trail entry for the ones
+        // that don't actually contain any fixed value (the common case for a wide scope).
+        for &var in &self.scope {
+            if !domains.get(&var).is_some_and(|d| d.len() > 1) {
+                continue;
+            }
+            let did_change = domains
+                .mutate(var, |domain| {
+                    let mut any = false;
+                    for &val in &fixed_values {
+                        if domain.remove(val) {
+                            any = true;
+                        }
                     }
-                }
-                if domain.is_empty() {
-                    return PropagationResult::Conflict;
-                }
+                    any
+                })
+                .unwrap_or(false);
+            if did_change {
+                changed = true;
+            }
+            if domains.get(&var).is_some_and(|d| d.is_empty()) {
+                return PropagationResult::Conflict;
             }
         }
 

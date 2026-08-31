@@ -303,6 +303,35 @@ impl TrailedDomains {
         self.domains.get_mut(var)
     }
 
+    /// Applies `narrow` to `var`'s domain, recording an undo entry only if `narrow` reports (via
+    /// its `bool` return) that it actually modified the domain.
+    ///
+    /// Prefer this over [`Self::get_mut`] when a call site probes many variables per propagation
+    /// step but expects only a few to actually change (e.g. a newly-fixed value pruned from
+    /// every other variable in a wide `AllDifferent` scope, most of which don't contain it
+    /// anyway): `get_mut` would record — and later have to undo — an entry for every probed
+    /// variable regardless of whether anything changed.
+    ///
+    /// Returns `None` if `var` is untracked, `Some(changed)` otherwise.
+    ///
+    /// # Complexity
+    /// Time: O(1) amortized, plus the cost of cloning the domain being probed (O(1) for
+    /// `Domain::Range`, O(D) for `Domain::Explicit`) — paid once per call regardless of whether
+    /// `narrow` reports a change, since the pre-mutation value must be captured before `narrow`
+    /// runs.
+    pub fn mutate(
+        &mut self,
+        var: VariableId,
+        narrow: impl FnOnce(&mut Domain) -> bool,
+    ) -> Option<bool> {
+        let before = self.domains.get(&var)?.clone();
+        let changed = narrow(self.domains.get_mut(&var)?);
+        if changed {
+            self.trail.push((var, before));
+        }
+        Some(changed)
+    }
+
     /// Returns a checkpoint identifying the current trail position, to later pass to
     /// [`Self::undo_to`].
     ///
@@ -473,5 +502,40 @@ mod tests {
         assert!(trailed.contains_key(&v));
         assert_eq!(trailed.len(), 1);
         assert_eq!(trailed.get(&v), Some(&Domain::range(1, 10)));
+    }
+
+    #[test]
+    fn test_trailed_domains_mutate_no_op_does_not_grow_trail() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let checkpoint = trailed.checkpoint();
+        // remove_above(20) on a domain already bounded by 10 is a no-op (returns false).
+        let changed = trailed.mutate(v, |d| d.remove_above(20));
+        assert_eq!(changed, Some(false));
+        assert_eq!(
+            trailed.checkpoint(),
+            checkpoint,
+            "no-op mutation must not grow the trail"
+        );
+        assert_eq!(trailed.get(&v).unwrap(), &Domain::range(1, 10));
+    }
+
+    #[test]
+    fn test_trailed_domains_mutate_confirmed_change_is_undoable() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let checkpoint = trailed.checkpoint();
+        let changed = trailed.mutate(v, |d| d.remove_above(5));
+        assert_eq!(changed, Some(true));
+        assert_eq!(trailed.get(&v).unwrap().max(), Some(5));
+
+        trailed.undo_to(checkpoint);
+        assert_eq!(trailed.get(&v).unwrap(), &Domain::range(1, 10));
     }
 }

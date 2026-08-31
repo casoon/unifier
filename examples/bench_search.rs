@@ -125,6 +125,7 @@ fn main() {
     println!("=== unifier search benchmark ===");
     println!("(release mode matters: run with `cargo run --release --example bench_search`)\n");
 
+    // Small/medium cases (original corpus, kept for before/after comparability).
     for n in [8, 10, 12] {
         run_backtracking(&format!("nqueens({n}) backtracking"), &nqueens(n), &options);
     }
@@ -143,6 +144,27 @@ fn main() {
     run_branch_and_bound(
         "exactly_one_at_least(8) B&B",
         &exactly_one_and_at_least(8, 3),
+        &options,
+    );
+
+    // Larger/denser cases, added to measure how each category scales (per
+    // plan/10-meilenstein-0.2-follow-up.md). `all_different_maximize(9)` in particular runs into
+    // the tens of millions of nodes and takes on the order of 10+ seconds.
+    println!();
+    run_backtracking("nqueens(20) backtracking [larger]", &nqueens(20), &options);
+    run_branch_and_bound(
+        "all_different_maximize(9) B&B [larger]",
+        &all_different_maximize(9, 14),
+        &options,
+    );
+    run_branch_and_bound(
+        "cumulative_scheduling(16) B&B [denser]",
+        &cumulative_scheduling(16, 20, 3),
+        &options,
+    );
+    run_branch_and_bound(
+        "exactly_one_at_least(16) B&B [larger]",
+        &exactly_one_and_at_least(16, 3),
         &options,
     );
 }
