@@ -16,13 +16,15 @@
 //! minimal-reproduction case).
 
 use proptest::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use unifier::constraint::PropagationResult;
+use unifier::constraint::no_overlap::TaskInterval;
 use unifier::dsl::ModelBuilder;
 use unifier::score::{HardSoftScore, ScoreCalculator};
 use unifier::solver::{
     BacktrackingSolver, BranchAndBoundSolver, LocalSearchSolver, SolveStatus, SolverOptions,
 };
-use unifier::{ConstraintGraph, VariableId};
+use unifier::{Constraint, ConstraintGraph, Domain, NoOverlap, TrailedDomains, VariableId};
 
 /// Exhaustively enumerates every complete assignment of `graph`'s (small!) domains and returns
 /// the best `HardSoftScore` among assignments satisfying every constraint, or `None` if none do.
@@ -236,5 +238,104 @@ proptest! {
 
         prop_assert_eq!(first.status, second.status);
         prop_assert_eq!(first.solution.map(|s| s.score), second.solution.map(|s| s.score));
+    }
+
+    /// Differential-tests `NoOverlap::propagate`'s edge-finding bound update (see
+    /// `src/constraint/no_overlap.rs`'s `edge_finding_bound_updates`) for *soundness* against a
+    /// brute-force oracle: propagation must never remove a start-time value that's part of some
+    /// valid (pairwise non-overlapping) complete assignment of the whole task list.
+    ///
+    /// Complements the hand-verified unit tests in `no_overlap.rs` (which check one specific,
+    /// manually-derived case exactly) with broad randomized coverage — the explicit bar the
+    /// bound-tightening work was scoped to (see `plan/00-STATUS.md`, part D). Runs propagation to
+    /// a local fixpoint (repeated `propagate()` calls) since a single call needn't reach the
+    /// tightest possible result — soundness, not completeness, is what's being checked.
+    #[test]
+    fn prop_no_overlap_edge_finding_never_removes_a_reachable_value(
+        n_tasks in 2usize..=4,
+        window in 3i64..=6,
+        seed in 0u64..1000,
+    ) {
+        let durations: Vec<u64> = (0..n_tasks)
+            .map(|i| 1 + (seed.wrapping_add(i as u64 * 7) % 4))
+            .collect();
+        let vars: Vec<VariableId> = (0..n_tasks).map(|i| VariableId(i as u32)).collect();
+
+        let mut domains: HashMap<VariableId, Domain> = HashMap::new();
+        for &v in &vars {
+            domains.insert(v, Domain::range(0, window));
+        }
+        let value_ranges: Vec<Vec<i64>> = vars.iter().map(|v| domains[v].values()).collect();
+
+        // Brute force: every value that appears in some valid (pairwise non-overlapping)
+        // complete assignment, per variable.
+        fn is_valid(assignment: &[i64], durations: &[u64]) -> bool {
+            for i in 0..assignment.len() {
+                for j in (i + 1)..assignment.len() {
+                    let (s1, s2) = (assignment[i], assignment[j]);
+                    let e1 = s1 + durations[i] as i64;
+                    let e2 = s2 + durations[j] as i64;
+                    if e1 > s2 && e2 > s1 {
+                        return false;
+                    }
+                }
+            }
+            true
+        }
+        fn recurse(
+            idx: usize,
+            current: &mut Vec<i64>,
+            value_ranges: &[Vec<i64>],
+            durations: &[u64],
+            reachable: &mut [HashSet<i64>],
+        ) {
+            if idx == value_ranges.len() {
+                if is_valid(current, durations) {
+                    for (slot, &val) in reachable.iter_mut().zip(current.iter()) {
+                        slot.insert(val);
+                    }
+                }
+                return;
+            }
+            for &val in &value_ranges[idx] {
+                current.push(val);
+                recurse(idx + 1, current, value_ranges, durations, reachable);
+                current.pop();
+            }
+        }
+        let mut reachable: Vec<HashSet<i64>> = vec![HashSet::new(); n_tasks];
+        recurse(0, &mut Vec::new(), &value_ranges, &durations, &mut reachable);
+
+        // Run NoOverlap::propagate to a local fixpoint from the same starting domains.
+        let tasks: Vec<TaskInterval> = vars
+            .iter()
+            .zip(&durations)
+            .map(|(&start, &duration)| TaskInterval { start, duration })
+            .collect();
+        let constraint = NoOverlap::new(tasks);
+        let mut trailed = TrailedDomains::new(domains);
+        loop {
+            match constraint.propagate(&mut trailed) {
+                PropagationResult::Conflict => break,
+                PropagationResult::Success { changed } => {
+                    if !changed {
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (idx, &v) in vars.iter().enumerate() {
+            let remaining: HashSet<i64> = trailed
+                .get(&v)
+                .map(|d| d.values().into_iter().collect())
+                .unwrap_or_default();
+            prop_assert!(
+                reachable[idx].is_subset(&remaining),
+                "propagation removed a value that was part of some valid solution for {:?}: \
+                 reachable={:?} remaining={:?} (n_tasks={n_tasks}, window={window}, seed={seed}, durations={:?})",
+                v, reachable[idx], remaining, durations
+            );
+        }
     }
 }

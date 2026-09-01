@@ -8,11 +8,40 @@ use crate::constraint::{Constraint, PropagationResult};
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Every `REGIN_INTERVAL`-th [`AllDifferent::propagate`] call on a given instance runs the full
+/// Régin matching+SCC pass; the others run only the cheap fixed-value pass
+/// ([`prune_fixed_values`]). Benchmarking the full-strength-every-call version (see
+/// `plan/00-STATUS.md`, part C) measured a ~10x per-call throughput cost that an index-based
+/// rewrite narrowed to ~2.7-4x but didn't close — most calls during search don't actually sit on
+/// a Hall set, so paying the O(N*E) matching + O(N+E) SCC/reachability cost on every single call
+/// buys little. Throttling to every 4th call trades a bounded amount of missed Hall-set pruning
+/// (never *unsound* — see [`AllDifferent::propagate`]'s doc comment) for materially less overhead
+/// per search node. Chosen by measurement, not derivation; see
+/// `plan/11-search-heuristics-and-global-constraints.md`, section C, for the alternative
+/// considered (incremental matching maintenance, not implemented — larger, cross-cutting change).
+const REGIN_INTERVAL: u32 = 4;
 
 /// Global constraint enforcing that all variables in its scope take pairwise distinct values.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AllDifferent {
     scope: Vec<VariableId>,
+    /// Call counter driving [`REGIN_INTERVAL`]-throttled Régin invocation. Monotonic across the
+    /// whole search (not trail/checkpoint-aware) — it's a performance hint, not solver state, so
+    /// it doesn't need to roll back on backtrack.
+    call_count: AtomicU32,
+}
+
+impl Clone for AllDifferent {
+    /// Clones the scope; the call counter restarts at 0 (it's a throttling hint, not semantic
+    /// state — see `REGIN_INTERVAL`).
+    fn clone(&self) -> Self {
+        Self {
+            scope: self.scope.clone(),
+            call_count: AtomicU32::new(0),
+        }
+    }
 }
 
 impl AllDifferent {
@@ -23,8 +52,66 @@ impl AllDifferent {
     pub fn new(variables: impl IntoIterator<Item = VariableId>) -> Self {
         Self {
             scope: variables.into_iter().collect(),
+            call_count: AtomicU32::new(0),
         }
     }
+}
+
+/// Removes already-fixed (singleton-domain) values from every other scope variable, and detects
+/// the immediate conflict of two variables both fixed to the same value — the pairwise filtering
+/// `AllDifferent` used before Régin's algorithm was added. Cheap (O(scope.len())) relative to full
+/// GAC, and run on every [`AllDifferent::propagate`] call regardless of [`REGIN_INTERVAL`]
+/// throttling: it catches the common "two fixed variables collide" conflict without paying for a
+/// full matching, and its pruning feeds directly into whichever pass (cheap-only or full Régin)
+/// runs next.
+///
+/// # Complexity
+/// Time & Space: O(N) where N = `scope.len()`.
+fn prune_fixed_values(
+    domains: &mut TrailedDomains,
+    scope: &[VariableId],
+) -> Result<bool, PropagationResult> {
+    let mut changed = false;
+
+    let mut fixed_values = HashSet::new();
+    for &var in scope {
+        if let Some(domain) = domains.get(&var)
+            && domain.len() == 1
+            && let Some(val) = domain.min()
+            && !fixed_values.insert(val)
+        {
+            return Err(PropagationResult::Conflict);
+        }
+    }
+
+    if fixed_values.is_empty() {
+        return Ok(false);
+    }
+
+    for &var in scope {
+        if !domains.get(&var).is_some_and(|d| d.len() > 1) {
+            continue;
+        }
+        let did_change = domains
+            .mutate(var, |domain| {
+                let mut any = false;
+                for &val in &fixed_values {
+                    if domain.remove(val) {
+                        any = true;
+                    }
+                }
+                any
+            })
+            .unwrap_or(false);
+        if did_change {
+            changed = true;
+        }
+        if domains.get(&var).is_some_and(|d| d.is_empty()) {
+            return Err(PropagationResult::Conflict);
+        }
+    }
+
+    Ok(changed)
 }
 
 /// Extends the matching `match_var`/`match_val` by one more variable via an augmenting path
@@ -216,6 +303,12 @@ impl Constraint for AllDifferent {
     /// SCC), or `v` lies on an alternating path to a free/unmatched value. Both are computed
     /// below (`compute_scc`, `reaches_any`); an edge failing both is pruned.
     ///
+    /// The full matching+SCC pass only runs every `REGIN_INTERVAL`-th call on this instance;
+    /// `prune_fixed_values` (cheap fixed-value filtering) always runs. This is a deliberate,
+    /// sound weakening — a skipped call still performs valid (if not maximally strong)
+    /// propagation, it just doesn't always catch every Hall-set-only inconsistency the moment it
+    /// appears. See `REGIN_INTERVAL`'s doc comment for why.
+    ///
     /// # Performance
     /// Variables and candidate values are mapped to plain `0..n`/`0..m` indices once up front
     /// (`var_candidates`, `values`) so the matching, SCC, and reachability passes operate on
@@ -242,6 +335,18 @@ impl Constraint for AllDifferent {
         let n = self.scope.len();
         if n == 0 {
             return PropagationResult::Success { changed: false };
+        }
+
+        let mut changed = match prune_fixed_values(domains, &self.scope) {
+            Ok(changed) => changed,
+            Err(conflict) => return conflict,
+        };
+
+        // Throttle the expensive full pass (see `REGIN_INTERVAL`'s doc comment); the calls in
+        // between rely on the cheap fixed-value pass above alone.
+        let call_index = self.call_count.fetch_add(1, Ordering::Relaxed);
+        if !call_index.is_multiple_of(REGIN_INTERVAL) {
+            return PropagationResult::Success { changed };
         }
 
         // Assign each distinct candidate value a dense index 0..m, shared across variables so
@@ -309,8 +414,8 @@ impl Constraint for AllDifferent {
         // Prune (var, val) when neither sufficient condition for "usable in some maximum
         // matching" holds. The matched value is never a pruning candidate, so `mutate` below
         // always leaves at least one value behind — the domain can't become empty from this
-        // constraint's own pruning.
-        let mut changed = false;
+        // constraint's own pruning. `changed` already reflects `prune_fixed_values` above; this
+        // loop only ever adds to it.
         for var in 0..n {
             let matched_val = match_var[var].expect("every variable was matched above");
             let var_scc = scc_id[var];
@@ -387,6 +492,45 @@ mod tests {
             trailed.get(&c).unwrap().values(),
             vec![3],
             "c can never take 1 or 2: a,b (a Hall set) exhaust both between them"
+        );
+    }
+
+    /// The full Régin pass only runs every `REGIN_INTERVAL`-th call on a given instance (see its
+    /// doc comment); the calls in between rely on `prune_fixed_values` alone, which cannot see a
+    /// Hall set that isn't also a fixed-value collision. Re-running the exact Hall-set scenario
+    /// from `test_propagate_prunes_hall_set_beyond_pairwise_filtering` against fresh domains each
+    /// time, but the *same* `AllDifferent` instance (so its call counter keeps advancing), the
+    /// Hall-set pruning must appear on call 1 and call 5 (indices 0 and 4), and be absent on
+    /// calls 2-4 (indices 1-3).
+    #[test]
+    fn test_propagate_throttles_full_regin_pass_to_every_interval_th_call() {
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        let constraint = AllDifferent::new([a, b, c]);
+
+        let fresh_domains = || {
+            let mut domains = HashMap::new();
+            domains.insert(a, Domain::range(1, 2));
+            domains.insert(b, Domain::range(1, 2));
+            domains.insert(c, Domain::range(1, 3));
+            TrailedDomains::new(domains)
+        };
+
+        let mut pruned_c_on_call = Vec::new();
+        for call in 1..=(REGIN_INTERVAL as usize + 1) {
+            let mut trailed = fresh_domains();
+            constraint.propagate(&mut trailed);
+            if trailed.get(&c).unwrap().values() == vec![3] {
+                pruned_c_on_call.push(call);
+            }
+        }
+
+        assert_eq!(
+            pruned_c_on_call,
+            vec![1, REGIN_INTERVAL as usize + 1],
+            "full Régin pass (and thus the Hall-set pruning) should fire on call 1 and call \
+             REGIN_INTERVAL+1, not the calls in between"
         );
     }
 

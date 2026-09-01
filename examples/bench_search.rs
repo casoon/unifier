@@ -17,7 +17,7 @@ use unifier::dsl::ModelBuilder;
 use unifier::solver::{
     BacktrackingSolver, BranchAndBoundSolver, SearchStatistics, SolveOutcome, SolverOptions,
 };
-use unifier::{ValidatedGraph, VariableId};
+use unifier::{Interval, ValidatedGraph, VariableId};
 
 /// N-Queens(n): pure CSP, propagation- and backtracking-heavy.
 fn nqueens(n: i64) -> ValidatedGraph {
@@ -65,6 +65,110 @@ fn cumulative_scheduling(n_tasks: i64, window: i64, capacity: u32) -> ValidatedG
         .collect();
     builder.add_cumulative(tasks, capacity);
     builder.build().expect("valid model")
+}
+
+/// A small disjunctive (unary-resource) scheduling instance: `NoOverlap` over task intervals
+/// (each fully occupies the resource while active — e.g. one teacher/room/machine), independent
+/// of `Cumulative`. Added alongside part D (`plan/11-search-heuristics-and-global-constraints.md`)
+/// so the energetic-reasoning overload check gets its own measured baseline instead of only being
+/// exercised indirectly through `cumulative_scheduling`.
+fn no_overlap_scheduling(n_tasks: i64, window: i64) -> ValidatedGraph {
+    let mut builder = ModelBuilder::new();
+    let durations: Vec<u64> = (0..n_tasks).map(|i| 2 + (i as u64 % 3)).collect();
+    let intervals: Vec<Interval> = (0..n_tasks)
+        .map(|i| {
+            let duration = durations[i as usize];
+            builder.new_interval(
+                &format!("t{i}"),
+                0..=window,
+                duration,
+                0..=(window + duration as i64),
+            )
+        })
+        .collect();
+    builder.add_no_overlap(&intervals, &durations);
+    builder.build().expect("valid model")
+}
+
+/// A small job-shop-style instance: `n_jobs` jobs, each a fixed sequence of `n_machines`
+/// operations (one per machine, in a job-specific order — a cyclic permutation of machines, so
+/// jobs genuinely contend for machines in different orders rather than all queuing identically).
+/// Combines `Precedence` (each job's operations run in sequence) with `NoOverlap` (each machine
+/// is a unary resource) — real cross-constraint contention structure, unlike
+/// `cumulative_scheduling`/`no_overlap_scheduling`'s independent, uniformly-random task domains.
+///
+/// Modeled after classic job-shop scheduling benchmarks (e.g. Fisher, H., & Thompson, G. L.
+/// (1963). *Probabilistic learning combinations of local job-shop scheduling rules*, the origin
+/// of the "FT" instance family), scaled down. Added per
+/// `plan/11-search-heuristics-and-global-constraints.md`, part D: the existing corpus is
+/// synthetic/randomly generated and doesn't exercise the multi-constraint resource contention a
+/// real scheduling instance would, making it a weak signal for whether `Cumulative`/`NoOverlap`
+/// edge-finding actually helps in practice.
+///
+/// The horizon (`start`/`end` domain upper bound) is set to the makespan lower bound — the
+/// longer of the busiest single job's total duration and the busiest machine's total load — plus
+/// one job's worth of slack, keeping the instance feasible but tight enough to require real
+/// search rather than being solvable by propagation alone.
+fn job_shop_scheduling(n_jobs: i64, n_machines: i64) -> ValidatedGraph {
+    let mut builder = ModelBuilder::new();
+
+    // Deterministic per-(job, machine-slot) duration: varies enough to avoid a degenerate
+    // uniform instance without needing true randomness (benchmark runs must stay reproducible).
+    let duration_at = |job: i64, slot: i64| -> u64 { 2 + ((job * 3 + slot * 2) % 4) as u64 };
+
+    let longest_job: i64 = (0..n_jobs)
+        .map(|job| {
+            (0..n_machines)
+                .map(|slot| duration_at(job, slot) as i64)
+                .sum()
+        })
+        .max()
+        .unwrap_or(0);
+    let busiest_machine: i64 = (0..n_machines)
+        .map(|machine| {
+            (0..n_jobs)
+                .map(|job| {
+                    // Job `job`'s operation on `machine` is at the slot solving
+                    // `(slot + job) % n_machines == machine` (see the assignment below).
+                    let slot = (machine - job).rem_euclid(n_machines);
+                    duration_at(job, slot) as i64
+                })
+                .sum()
+        })
+        .max()
+        .unwrap_or(0);
+    let horizon = longest_job.max(busiest_machine) + longest_job;
+
+    let mut machine_ops: Vec<Vec<Interval>> = vec![Vec::new(); n_machines as usize];
+    let mut machine_durations: Vec<Vec<u64>> = vec![Vec::new(); n_machines as usize];
+
+    for job in 0..n_jobs {
+        let mut prev_op: Option<Interval> = None;
+        for slot in 0..n_machines {
+            let duration = duration_at(job, slot);
+            let op = builder.new_interval(
+                &format!("j{job}_op{slot}"),
+                0..=horizon,
+                duration,
+                0..=(horizon + duration as i64),
+            );
+            if let Some(prev) = &prev_op {
+                builder.add_precedence(prev, &op, 0);
+            }
+            // Cyclic permutation: job `job`'s `slot`-th operation runs on machine
+            // `(slot + job) % n_machines`, so different jobs visit machines in different orders.
+            let machine = ((slot + job) % n_machines) as usize;
+            machine_ops[machine].push(op.clone());
+            machine_durations[machine].push(duration);
+            prev_op = Some(op);
+        }
+    }
+
+    for (ops, durations) in machine_ops.iter().zip(machine_durations.iter()) {
+        builder.add_no_overlap(ops, durations);
+    }
+
+    builder.build().expect("valid job-shop model")
 }
 
 /// ExactlyOne + AtLeast + maximize: exercises the `Constraint::is_satisfiable` domain-sensitive
@@ -142,8 +246,18 @@ fn main() {
         &options,
     );
     run_branch_and_bound(
+        "no_overlap_scheduling(8) B&B",
+        &no_overlap_scheduling(8, 20),
+        &options,
+    );
+    run_branch_and_bound(
         "exactly_one_at_least(8) B&B",
         &exactly_one_and_at_least(8, 3),
+        &options,
+    );
+    run_branch_and_bound(
+        "job_shop_scheduling(3,3) B&B",
+        &job_shop_scheduling(3, 3),
         &options,
     );
 
@@ -163,8 +277,21 @@ fn main() {
         &options,
     );
     run_branch_and_bound(
+        // Unlike `cumulative_scheduling`, `NoOverlap` is a unary (capacity-1) resource: 16 tasks
+        // with durations 2-4 (sum 47) need a horizon on that order to stay feasible-but-tight,
+        // not the 20-slot window `cumulative_scheduling` uses at capacity 3.
+        "no_overlap_scheduling(16) B&B [denser]",
+        &no_overlap_scheduling(16, 45),
+        &options,
+    );
+    run_branch_and_bound(
         "exactly_one_at_least(16) B&B [larger]",
         &exactly_one_and_at_least(16, 3),
+        &options,
+    );
+    run_branch_and_bound(
+        "job_shop_scheduling(4,4) B&B [denser]",
+        &job_shop_scheduling(4, 4),
         &options,
     );
 }
