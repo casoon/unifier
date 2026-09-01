@@ -324,6 +324,7 @@ fn test_parallel_solver_does_not_claim_infeasible_when_starved() {
         time_limit: None,
         max_nodes: Some(0),
         cancellation_token: None,
+        shared_incumbent: None,
     };
     let outcome = ParallelSolver::new().solve(&graph, &options);
     assert!(
@@ -340,6 +341,7 @@ fn test_backtracking_aborts_on_node_limit() {
         time_limit: None,
         max_nodes: Some(0),
         cancellation_token: None,
+        shared_incumbent: None,
     };
     let outcome = BacktrackingSolver::new().solve(&graph, &options);
     assert_eq!(outcome.status, SolveStatus::Aborted(AbortReason::NodeLimit));
@@ -393,6 +395,40 @@ fn test_branch_and_bound_proves_optimum_matches_oracle() {
 }
 
 #[test]
+fn test_parallel_solver_returns_proven_optimum_not_first_worker_to_report() {
+    // Exit criterion for plan/13-anytime-portfolio.md: same model as
+    // `test_branch_and_bound_proves_optimum_matches_oracle` (a first-found assignment differs
+    // from the true optimum), but through `ParallelSolver`. Backtracking/Local Search/LNS have
+    // no reason to find the true maximum-sum assignment on their first try, and may report a
+    // worse-but-feasible result before Branch & Bound (seeded via the shared incumbent) proves
+    // the optimum -- the *final* result must still be the proven optimum, not whichever worker's
+    // `SolveOutcome` happened to arrive first.
+    let mut builder = ModelBuilder::new();
+    let vars: Vec<_> = (0..3)
+        .map(|i| builder.new_var(format!("v{i}"), 1..=5))
+        .collect();
+    builder.add_all_different(vars.clone());
+    builder.add_maximize(vars.clone(), 1);
+    let graph = builder.build().expect("model should validate");
+
+    let oracle_best = brute_force_best(&graph).expect("feasible by construction");
+    assert_eq!(oracle_best, HardSoftScore::new(0, 12));
+
+    let outcome = ParallelSolver::new().solve(&graph, &SolverOptions::default());
+    assert_eq!(
+        outcome.status,
+        SolveStatus::Optimal,
+        "Branch & Bound (one of the four portfolio workers) should prove optimality here"
+    );
+    let solution = outcome.solution.expect("Optimal implies a solution");
+    assert_eq!(
+        solution.score, oracle_best,
+        "ParallelSolver must return the proven optimum, not a worse solution some other worker \
+         may have reported first"
+    );
+}
+
+#[test]
 fn test_branch_and_bound_minimize_matches_oracle() {
     let mut builder = ModelBuilder::new();
     let vars: Vec<_> = (0..3)
@@ -425,6 +461,7 @@ fn test_branch_and_bound_not_proven_optimal_when_node_starved() {
         time_limit: None,
         max_nodes: Some(3),
         cancellation_token: None,
+        shared_incumbent: None,
     };
     let outcome = BranchAndBoundSolver::new().solve(&graph, &options);
     match outcome.status {

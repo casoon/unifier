@@ -9,6 +9,7 @@ pub mod lns;
 pub mod local_search;
 pub mod parallel;
 pub mod pathwise_bridge;
+pub mod shared_incumbent;
 
 pub use backtracking::BacktrackingSolver;
 pub use branch_and_bound::BranchAndBoundSolver;
@@ -17,6 +18,7 @@ pub use lns::LnsSolver;
 pub use local_search::LocalSearchSolver;
 pub use parallel::ParallelSolver;
 pub use pathwise_bridge::UnifierProblemAdapter;
+pub use shared_incumbent::SharedIncumbent;
 
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
@@ -34,6 +36,12 @@ pub struct SolverOptions {
     pub max_nodes: Option<u64>,
     /// Optional thread-safe cancellation handle.
     pub cancellation_token: Option<CancellationToken>,
+    /// Optional portfolio-wide shared incumbent (see [`SharedIncumbent`]). When present,
+    /// [`BranchAndBoundSolver`] additionally bounds its search against it (and contributes its
+    /// own improvements back), and [`LocalSearchSolver`]/[`LnsSolver`] contribute improving
+    /// solutions they find. Set by [`ParallelSolver`] for its workers; `None` for a standalone
+    /// solver run.
+    pub shared_incumbent: Option<SharedIncumbent>,
 }
 
 impl Default for SolverOptions {
@@ -42,6 +50,7 @@ impl Default for SolverOptions {
             time_limit: Some(Duration::from_secs(10)),
             max_nodes: None,
             cancellation_token: None,
+            shared_incumbent: None,
         }
     }
 }

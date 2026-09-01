@@ -41,6 +41,10 @@ impl LnsSolver {
 
     /// Solves the COP problem using Large Neighborhood Search.
     ///
+    /// If `options.shared_incumbent` is set (see [`crate::solver::SharedIncumbent`], used by
+    /// [`crate::solver::ParallelSolver`]), every improving solution found (including the initial
+    /// one) is also offered to it — write-only, like [`crate::solver::LocalSearchSolver`].
+    ///
     /// # Complexity
     /// Time: O(I * d^K) where I is number of LNS iterations, K is number of destroyed variables.
     /// Space: O(N * d) graph snapshot depth.
@@ -54,6 +58,9 @@ impl LnsSolver {
 
         let mut best_assignment = current_assignment.clone();
         let mut best_score = current_score;
+        if let Some(incumbent) = &options.shared_incumbent {
+            incumbent.offer(&best_assignment, best_score);
+        }
 
         let start_time = Instant::now();
         let mut lns_step = 0u64;
@@ -108,6 +115,7 @@ impl LnsSolver {
                     .map(|t| t.saturating_sub(start_time.elapsed())),
                 max_nodes: Some(500),
                 cancellation_token: options.cancellation_token.clone(),
+                shared_incumbent: options.shared_incumbent.clone(),
             };
 
             let repair_outcome = self.repair_solver.solve(&sub_graph, &repair_options);
@@ -117,6 +125,9 @@ impl LnsSolver {
                 best_score = score;
                 best_assignment = assignment.clone();
                 current_assignment = assignment;
+                if let Some(incumbent) = &options.shared_incumbent {
+                    incumbent.offer(&best_assignment, best_score);
+                }
             }
         }
 
@@ -138,7 +149,9 @@ impl LnsSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::domain::Domain;
     use crate::propagation::graph::ConstraintGraph;
+    use std::sync::Arc;
 
     #[test]
     fn test_solve_empty_graph_does_not_panic() {
@@ -148,5 +161,33 @@ mod tests {
         let solver = LnsSolver::default();
         let outcome = solver.solve(&graph, &SolverOptions::default());
         assert!(outcome.solution.is_some());
+    }
+
+    #[test]
+    fn test_solve_offers_final_solution_to_shared_incumbent() {
+        // Whatever LNS's destroy/repair search actually converges on (not asserted here — that's
+        // an algorithm-quality question, not a wiring one), the returned solution's score must
+        // match what was offered to the shared incumbent: every improvement (including the
+        // initial one) is mirrored to it.
+        let mut graph = ConstraintGraph::new();
+        let x = VariableId(0);
+        graph.add_variable(
+            crate::model::variable::Variable::new(x, "x"),
+            Domain::range(0, 5),
+        );
+        graph.add_objective(Arc::new(crate::score::WeightedSum::new([x], 1)));
+        let graph = graph.finalize().unwrap();
+
+        let incumbent = crate::solver::SharedIncumbent::new();
+        let options = SolverOptions {
+            time_limit: Some(std::time::Duration::from_millis(200)),
+            shared_incumbent: Some(incumbent.clone()),
+            ..SolverOptions::default()
+        };
+        let outcome = LnsSolver::default().solve(&graph, &options);
+        let solution = outcome
+            .solution
+            .expect("feasible: single unconstrained variable");
+        assert_eq!(incumbent.best_score(), Some(solution.score));
     }
 }

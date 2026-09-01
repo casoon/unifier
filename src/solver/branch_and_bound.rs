@@ -52,6 +52,13 @@ impl BranchAndBoundSolver {
     /// computed once before branching; it stays loose (not tightened during search) but is always
     /// a valid upper bound on the achievable soft score.
     ///
+    /// If `options.shared_incumbent` is set (see [`crate::solver::SharedIncumbent`], used by
+    /// [`crate::solver::ParallelSolver`]), this solver both bounds its own search against
+    /// whatever a portfolio sibling has already found and contributes its own improvements back
+    /// — a solution's origin (this call or another worker) doesn't affect the returned status:
+    /// exhausting the search space while holding a portfolio-wide incumbent still proves it
+    /// `Optimal`.
+    ///
     /// # Complexity
     /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`])
     /// and MRV variable ordering.
@@ -145,9 +152,26 @@ impl BranchAndBoundSolver {
                 if is_better {
                     *state.best_score = Some(score);
                     *state.best_solution = Some(assignment.clone());
+                    if let Some(incumbent) = &options.shared_incumbent {
+                        incumbent.offer(assignment, score);
+                    }
                 }
             }
             return true;
+        }
+
+        // Adopt a better portfolio-wide incumbent (see `SharedIncumbent`) before bounding: some
+        // other worker (e.g. Local Search, LNS) may have found a stronger solution than this
+        // subtree knows about yet. `best_solution` must be updated alongside `best_score` so the
+        // pair stays consistent — `solve()`'s final match on `(best_solution, best_score)` would
+        // otherwise report `Infeasible` despite a solution existing, if only the score were
+        // adopted.
+        if let Some(incumbent) = &options.shared_incumbent
+            && let Some((shared_assignment, shared_score)) = incumbent.best()
+            && state.best_score.is_none_or(|b| shared_score > b)
+        {
+            *state.best_score = Some(shared_score);
+            *state.best_solution = Some(shared_assignment);
         }
 
         // Bound-based pruning: if no completion of this branch can beat the best score found so
@@ -242,5 +266,62 @@ mod tests {
         );
         assert_eq!(solution.assignment[&x], 1);
         assert_eq!(solution.assignment[&y], 0);
+    }
+
+    fn maximize_x_model(max: i64) -> (ValidatedGraph, VariableId) {
+        let mut graph = ConstraintGraph::new();
+        let x = VariableId(0);
+        graph.add_variable(
+            crate::model::variable::Variable::new(x, "x"),
+            Domain::range(0, max),
+        );
+        graph.add_objective(Arc::new(WeightedSum::new([x], 1)));
+        (graph.finalize().unwrap(), x)
+    }
+
+    #[test]
+    fn test_shared_incumbent_receives_branch_and_bound_improvements() {
+        let (graph, x) = maximize_x_model(5);
+        let incumbent = crate::solver::SharedIncumbent::new();
+        let options = SolverOptions {
+            shared_incumbent: Some(incumbent.clone()),
+            ..SolverOptions::default()
+        };
+
+        let outcome = BranchAndBoundSolver::new().solve(&graph, &options);
+        assert_eq!(outcome.status, crate::solver::SolveStatus::Optimal);
+        assert_eq!(
+            incumbent.best_score(),
+            Some(HardSoftScore::new(0, 5)),
+            "Branch & Bound's proven-optimal result must have been offered to the shared incumbent"
+        );
+        assert_eq!(outcome.solution.unwrap().assignment[&x], 5);
+    }
+
+    #[test]
+    fn test_branch_and_bound_improves_on_a_preseeded_shared_incumbent() {
+        let (graph, x) = maximize_x_model(10);
+        let incumbent = crate::solver::SharedIncumbent::new();
+        // Seed with a valid but suboptimal solution, as if another portfolio worker (e.g. Local
+        // Search) had already found it before Branch & Bound started.
+        let seeded_assignment: HashMap<VariableId, i64> = [(x, 3)].into_iter().collect();
+        incumbent.offer(&seeded_assignment, HardSoftScore::new(0, 3));
+
+        let options = SolverOptions {
+            shared_incumbent: Some(incumbent.clone()),
+            ..SolverOptions::default()
+        };
+
+        let outcome = BranchAndBoundSolver::new().solve(&graph, &options);
+        assert_eq!(
+            outcome.status,
+            crate::solver::SolveStatus::Optimal,
+            "adopting a suboptimal seeded incumbent as a starting bound must not stop the search \
+             from finding and proving the true optimum"
+        );
+        let solution = outcome.solution.expect("Optimal implies a solution");
+        assert_eq!(solution.score, HardSoftScore::new(0, 10));
+        assert_eq!(solution.assignment[&x], 10);
+        assert_eq!(incumbent.best_score(), Some(HardSoftScore::new(0, 10)));
     }
 }

@@ -15,7 +15,8 @@ use std::time::{Duration, Instant};
 use unifier::constraint::{NotEqual, TaskDemand};
 use unifier::dsl::ModelBuilder;
 use unifier::solver::{
-    BacktrackingSolver, BranchAndBoundSolver, SearchStatistics, SolveOutcome, SolverOptions,
+    BacktrackingSolver, BranchAndBoundSolver, ParallelSolver, SearchStatistics, SolveOutcome,
+    SolverOptions,
 };
 use unifier::{Interval, ValidatedGraph, VariableId};
 
@@ -196,6 +197,12 @@ fn run_branch_and_bound(name: &str, graph: &ValidatedGraph, options: &SolverOpti
     });
 }
 
+fn run_parallel(name: &str, graph: &ValidatedGraph, options: &SolverOptions) {
+    report(name, graph, options, |g, o| {
+        ParallelSolver::new().solve(g, o)
+    });
+}
+
 fn report(
     name: &str,
     graph: &ValidatedGraph,
@@ -240,6 +247,17 @@ fn main() {
             &options,
         );
     }
+    // Same model as `all_different_maximize(6) B&B` above, through the 4-worker portfolio
+    // instead: measures Meilenstein 0.4's join-overhead (every worker thread is now joined
+    // before `solve()` returns, not left running in the background) head-to-head against
+    // single-solver B&B on identical work. `nodes_expanded` sums across all four workers, so
+    // nodes/sec isn't directly comparable to a sequential solver's — `wall` is the metric that
+    // matters here.
+    run_parallel(
+        "all_different_maximize(6) Parallel",
+        &all_different_maximize(6, 11),
+        &options,
+    );
     run_branch_and_bound(
         "cumulative_scheduling(8) B&B",
         &cumulative_scheduling(8, 20, 3),
