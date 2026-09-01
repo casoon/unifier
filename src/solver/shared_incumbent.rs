@@ -19,10 +19,9 @@ type ScoredAssignment = (HashMap<VariableId, i64>, HardSoftScore);
 /// sharing this handle, if any. Cloning shares the same underlying state (see
 /// [`crate::solver::CancellationToken`] for the identical pattern).
 ///
-/// A thin wrapper around `pathwise`'s generic
-/// [`pathwise::core::incumbent::SharedIncumbent`] (see
-/// `plan/14-pathwise-generic-portfolio-primitives.md`), specialized to `unifier`'s assignment
-/// representation — `unifier`'s public method names/signatures are unchanged.
+/// A thin wrapper around `pathwise`'s generic [`pathwise::core::incumbent::SharedIncumbent`],
+/// specialized to `unifier`'s assignment representation — `unifier`'s public method
+/// names/signatures are unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct SharedIncumbent {
     inner: pathwise::core::incumbent::SharedIncumbent<HashMap<VariableId, i64>, HardSoftScore>,

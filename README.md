@@ -3,8 +3,8 @@
 Constraint satisfaction / optimization (CSP/COP) modeling and solver
 framework for Rust, integrating with
 [`pathwise`](https://github.com/casoon/pathwise)'s generic search and
-optimization traits (see "Relationship to `pathwise`" below for how far
-that integration currently goes).
+optimization traits (see "Solver stack" below for how far that
+integration currently goes).
 
 ## Status
 
@@ -66,7 +66,7 @@ emerges as part of a solver's search process. `ConstraintGraph::validate`
 variable references, empty domains, duplicate IDs, self-contradictory
 constraint parameters) before a solver ever sees them.
 
-## Relationship to `pathwise`
+## Solver stack
 
 `pathwise` provides the generic `Problem`/`OptimizationProblem` traits
 and interchangeable search/optimization strategies (A*, branch and

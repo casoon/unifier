@@ -11,7 +11,7 @@ keywords = ["csp", "constraint-solver", "optimization", "scheduling"]
 categories = ["algorithms", "mathematics"]
 
 [dependencies]
-pathwise = { path = "../pathwise" }
+pathwise = { version = "0.1.0", path = "../pathwise" }
 
 [dev-dependencies]
 proptest = "1.5"

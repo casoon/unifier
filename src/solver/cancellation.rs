@@ -10,10 +10,9 @@ use std::time::Duration;
 
 /// Thread-safe cancellation handle allowing external interruption of running solvers.
 ///
-/// Re-exported from `pathwise` (see `plan/14-pathwise-generic-portfolio-primitives.md`): the
-/// same `Arc<AtomicBool>`-based, CSP-independent primitive is now shared with `pathwise`'s own
-/// `branch_and_bound`/`local_search`/`large_neighborhood_search`, instead of `unifier`
-/// maintaining a duplicate implementation.
+/// Re-exported from `pathwise`: the same `Arc<AtomicBool>`-based, CSP-independent primitive is
+/// shared with `pathwise`'s own `branch_and_bound`/`local_search`/`large_neighborhood_search`,
+/// instead of `unifier` maintaining a duplicate implementation.
 pub use pathwise::core::cancellation::CancellationToken;
 
 /// Statistics collected during solver execution.
