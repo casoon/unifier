@@ -6,40 +6,15 @@
 //! References:
 //! - Rossi, F., van Beek, P., & Walsh, T. (2006). *Handbook of Constraint Programming*. Elsevier.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Thread-safe cancellation handle allowing external interruption of running solvers.
-#[derive(Debug, Clone, Default)]
-pub struct CancellationToken {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl CancellationToken {
-    /// Creates a new inactive cancellation token.
-    ///
-    /// Time & Space: O(1).
-    pub fn new() -> Self {
-        Self {
-            cancelled: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    /// Triggers cancellation, signaling all solvers holding this token to abort search.
-    ///
-    /// Time complexity: O(1).
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-    }
-
-    /// Returns `true` if cancellation has been requested.
-    ///
-    /// Time complexity: O(1).
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Relaxed)
-    }
-}
+///
+/// Re-exported from `pathwise` (see `plan/14-pathwise-generic-portfolio-primitives.md`): the
+/// same `Arc<AtomicBool>`-based, CSP-independent primitive is now shared with `pathwise`'s own
+/// `branch_and_bound`/`local_search`/`large_neighborhood_search`, instead of `unifier`
+/// maintaining a duplicate implementation.
+pub use pathwise::core::cancellation::CancellationToken;
 
 /// Statistics collected during solver execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

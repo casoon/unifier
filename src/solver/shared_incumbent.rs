@@ -11,7 +11,6 @@
 use crate::model::variable::VariableId;
 use crate::score::HardSoftScore;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 /// A complete variable assignment paired with its score.
 type ScoredAssignment = (HashMap<VariableId, i64>, HardSoftScore);
@@ -19,9 +18,14 @@ type ScoredAssignment = (HashMap<VariableId, i64>, HardSoftScore);
 /// The best feasible `(assignment, score)` pair found so far across all portfolio workers
 /// sharing this handle, if any. Cloning shares the same underlying state (see
 /// [`crate::solver::CancellationToken`] for the identical pattern).
+///
+/// A thin wrapper around `pathwise`'s generic
+/// [`pathwise::core::incumbent::SharedIncumbent`] (see
+/// `plan/14-pathwise-generic-portfolio-primitives.md`), specialized to `unifier`'s assignment
+/// representation — `unifier`'s public method names/signatures are unchanged.
 #[derive(Debug, Clone, Default)]
 pub struct SharedIncumbent {
-    best: Arc<Mutex<Option<ScoredAssignment>>>,
+    inner: pathwise::core::incumbent::SharedIncumbent<HashMap<VariableId, i64>, HardSoftScore>,
 }
 
 impl SharedIncumbent {
@@ -37,11 +41,7 @@ impl SharedIncumbent {
     /// # Complexity
     /// Time: O(1) (one mutex lock, no clone of the assignment).
     pub fn best_score(&self) -> Option<HardSoftScore> {
-        self.best
-            .lock()
-            .expect("shared incumbent mutex poisoned")
-            .as_ref()
-            .map(|(_, score)| *score)
+        self.inner.best_score()
     }
 
     /// Returns a clone of the current best `(assignment, score)` pair, if any.
@@ -49,10 +49,7 @@ impl SharedIncumbent {
     /// # Complexity
     /// Time & Space: O(N) where N is the assignment size, to clone it out from behind the lock.
     pub fn best(&self) -> Option<ScoredAssignment> {
-        self.best
-            .lock()
-            .expect("shared incumbent mutex poisoned")
-            .clone()
+        self.inner.best()
     }
 
     /// Replaces the incumbent with `(assignment, score)` if `score` improves on the current
@@ -62,12 +59,7 @@ impl SharedIncumbent {
     /// Time & Space: O(N) where N is the assignment size (cloned into shared storage on
     /// improvement; O(1) otherwise).
     pub fn offer(&self, assignment: &HashMap<VariableId, i64>, score: HardSoftScore) -> bool {
-        let mut guard = self.best.lock().expect("shared incumbent mutex poisoned");
-        let improves = guard.as_ref().is_none_or(|(_, best)| score > *best);
-        if improves {
-            *guard = Some((assignment.clone(), score));
-        }
-        improves
+        self.inner.offer(assignment, score)
     }
 }
 
