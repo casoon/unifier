@@ -12,6 +12,7 @@ pub mod equal;
 pub mod less_than;
 pub mod no_overlap;
 pub mod not_equal;
+pub mod optional;
 pub mod precedence;
 
 pub use all_different::AllDifferent;
@@ -22,6 +23,7 @@ pub use equal::Equal;
 pub use less_than::LessThanOrEqual;
 pub use no_overlap::NoOverlap;
 pub use not_equal::NotEqual;
+pub use optional::Optional;
 pub use precedence::Precedence;
 
 use crate::model::domain::{Domain, TrailedDomains};
