@@ -8,7 +8,7 @@ integration currently goes).
 
 ## Status
 
-Pre-release, not yet published to crates.io. The core model, constraint
+Early (`0.1.x`), published to crates.io. The core model, constraint
 propagation, global constraints, hard/soft scoring with weighted
 objectives, fallible model validation (`ConstraintGraph::validate` /
 `ModelBuilder::build`), and five solver strategies (Backtracking,
@@ -18,12 +18,10 @@ status (`Optimal` / `Feasible` / `Infeasible` / `Aborted(reason)`), the
 best solution found, search statistics, and — for Branch & Bound — a
 score bound.
 
-See `plan/00-STATUS.md` (local, untracked) for the implementation log,
-`plan/08-project-evaluation.md` for the first independent maturity
-assessment, and `plan/09-project-reevaluation-roadmap.md` for the
-follow-up assessment (including a since-fixed false-optimality-proof
-bug) and the maturity roadmap — read its release recommendation before
-relying on this for production planning scenarios.
+Not yet covered: conflict explanations / unsat cores, a `serde`-based
+model/solution serialization or CLI, and independent verification of
+production-scale scheduling scenarios — evaluate accordingly before
+relying on this for production planning.
 
 ## Problem class
 
@@ -57,7 +55,7 @@ cancellable at any point.
   capacity > 1 resources, `NoOverlap` for unary ones, `LessThanOrEqual`
   pairs for group containment), plus calendar exclusions, optional
   (presence-gated) activities, resource alternatives, and a tardiness
-  objective helper — see `plan/12-scheduling-vertical.md`
+  objective helper
 
 The problem itself is modeled as a **constraint graph** (a hypergraph of
 variables, constraints, and objectives), not a tree — the tree only
@@ -86,12 +84,17 @@ incumbent for anytime/parallel search coordination
 (`pathwise::core::cancellation`, `pathwise::core::incumbent`) — used by
 `unifier`'s solvers instead of duplicating that logic locally.
 
-See `plan/01-concept.md` for the full architecture (4 layers: DSL,
-constraint model, solver engine, runtime) and the MVP scope for 0.1.
+The overall architecture is four layers: DSL (problem-building surface
+API), constraint model (variable/domain/constraint graph), solver
+engine (propagation, backtracking, branch & bound, local search, LNS),
+and runtime (incremental scoring, cancellation).
 
 ## Installation
 
-Not yet published to crates.io.
+```toml
+[dependencies]
+unifier = "0.1"
+```
 
 ## License
 
