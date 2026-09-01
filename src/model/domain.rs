@@ -355,6 +355,32 @@ impl TrailedDomains {
             self.domains.insert(var, previous);
         }
     }
+
+    /// Returns the distinct variables with a trail entry recorded since `checkpoint`, i.e. the
+    /// variables [`Self::get_mut`]/[`Self::mutate`] touched. Used by the propagation engine's
+    /// event-based re-enqueueing (see `plan/11-search-heuristics-and-global-constraints.md`,
+    /// part B) to learn exactly which of a constraint's scope variables it modified during a
+    /// `propagate()` call — reusing the trail already recorded for undo instead of re-deriving
+    /// the same information via extra domain lookups.
+    ///
+    /// May over-report a variable whose net effect was a no-op if a caller used
+    /// [`Self::get_mut`] (which records unconditionally) rather than [`Self::mutate`] (which
+    /// only records on a confirmed change) — callers that need exactness should prefer `mutate`.
+    ///
+    /// # Complexity
+    /// Time: O(K) where K = trail entries since `checkpoint`. Space: O(distinct variables
+    /// touched).
+    pub fn changed_since(&self, checkpoint: usize) -> impl Iterator<Item = VariableId> + '_ {
+        let mut seen: Vec<VariableId> = Vec::new();
+        self.trail[checkpoint..].iter().filter_map(move |(var, _)| {
+            if seen.contains(var) {
+                None
+            } else {
+                seen.push(*var);
+                Some(*var)
+            }
+        })
+    }
 }
 
 impl std::ops::Deref for TrailedDomains {
@@ -537,5 +563,41 @@ mod tests {
 
         trailed.undo_to(checkpoint);
         assert_eq!(trailed.get(&v).unwrap(), &Domain::range(1, 10));
+    }
+
+    #[test]
+    fn test_changed_since_reports_distinct_touched_variables() {
+        let mut map = HashMap::new();
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        map.insert(a, Domain::range(1, 10));
+        map.insert(b, Domain::range(1, 10));
+        map.insert(c, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let checkpoint = trailed.checkpoint();
+        // `c` is untouched; `a` is mutated twice (should be reported once).
+        assert_eq!(trailed.mutate(a, |d| d.remove_above(5)), Some(true));
+        assert_eq!(trailed.mutate(b, |d| d.remove_above(5)), Some(true));
+        assert_eq!(trailed.mutate(a, |d| d.remove_above(3)), Some(true));
+
+        let mut touched: Vec<VariableId> = trailed.changed_since(checkpoint).collect();
+        touched.sort_by_key(|v| v.0);
+        assert_eq!(touched, vec![a, b]);
+    }
+
+    #[test]
+    fn test_changed_since_empty_when_nothing_mutated_after_checkpoint() {
+        let mut map = HashMap::new();
+        let v = VariableId(0);
+        map.insert(v, Domain::range(1, 10));
+        let mut trailed = TrailedDomains::new(map);
+
+        let _ = trailed.mutate(v, |d| d.remove_above(5));
+        let checkpoint = trailed.checkpoint();
+        assert_eq!(trailed.mutate(v, |d| d.remove_above(5)), Some(false)); // no-op, no trail entry
+
+        assert_eq!(trailed.changed_since(checkpoint).count(), 0);
     }
 }

@@ -188,3 +188,60 @@ pub(crate) fn prune(
 pub(crate) fn duration_as_i64(duration: u64) -> i64 {
     i64::try_from(duration).unwrap_or(i64::MAX)
 }
+
+/// Checks whether any time window `[a, b)` containing a subset of tasks demands more total
+/// `demand * duration` ("energy") than a resource of `capacity` can provide across that window —
+/// a generalization of pairwise mandatory-part reasoning to sets of three or more tasks whose
+/// individual pairwise overlaps don't reveal an infeasibility that their *combined* demand does
+/// (see `plan/11-search-heuristics-and-global-constraints.md`, part D, for a worked example: 3
+/// tasks with duration 2 each and starts free in `[0,3]` overload a unary resource only as a
+/// triple, not as any pair).
+///
+/// `tasks` gives each task's `(est, lct, energy)`: earliest start, latest completion
+/// (`domain_max + duration`), and `demand * duration` (or just `duration` for a unary resource
+/// with implicit demand 1, e.g. [`crate::constraint::NoOverlap`]). For every candidate window
+/// `[a, b)` — `a`/`b` drawn from the tasks' own `est`/`lct` values, since a tighter window can
+/// only ever be bounded by an actual task edge — sums the energy of every task fully confined to
+/// it (`est(task) >= a && lct(task) <= b`) and compares against `capacity * (b - a)`. If it's
+/// larger, the window cannot accommodate the confined tasks: `Conflict` regardless of what the
+/// rest of the schedule looks like.
+///
+/// This is the sound *detection* half of energetic reasoning / edge-finding — it never reports
+/// an overload that isn't real (soundness proof: every confined task's *entire* domain-feasible
+/// range lies within `[a, b)` by construction, so its whole duration's energy consumption must
+/// fall inside the window regardless of how it's actually scheduled; total energy exceeding
+/// `capacity * window` is then a necessary condition for infeasibility). It intentionally skips
+/// the harder *update* half (tightening `est` bounds for tasks that must run after an
+/// overloaded-adjacent set) — left as future work, see `plan/11-...md` part D.
+///
+/// # Complexity
+/// Time: O(N^3) (N candidate `a` thresholds x N candidate `b` thresholds x O(N) to sum energy
+/// per window) — a straightforward, easily-verified enumeration rather than the O(N log N)
+/// Theta-tree formulation the literature uses for the full algorithm. Fine at the task-list sizes
+/// scheduling constraints see in this crate's benchmark corpus; a production-scale (100s of
+/// tasks) implementation would want the Theta-tree instead.
+/// Space: O(N).
+///
+/// # Reference
+/// Erschler, J., & Lopez, P. (1990). *Energy-based approaches for task scheduling under time and
+/// resource constraints*. Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based
+/// Scheduling*. Springer (edge-finding and energetic reasoning for unary/cumulative resources).
+pub(crate) fn energetic_overload(tasks: &[(i64, i64, i64)], capacity: u32) -> bool {
+    let capacity = i64::from(capacity);
+    for &(a, _, _) in tasks {
+        for &(_, b, _) in tasks {
+            if a >= b {
+                continue;
+            }
+            let window = b - a;
+            let energy_sum = tasks
+                .iter()
+                .filter(|&&(est, lct, _)| est >= a && lct <= b)
+                .fold(0i64, |acc, &(_, _, energy)| acc.saturating_add(energy));
+            if energy_sum > capacity.saturating_mul(window) {
+                return true;
+            }
+        }
+    }
+    false
+}

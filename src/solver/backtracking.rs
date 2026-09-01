@@ -1,28 +1,38 @@
-//! Backtracking CSP solver with Minimum Remaining Values (MRV / Fail-First) variable ordering
-//! and AC-3 constraint propagation.
+//! Backtracking CSP solver with `dom/wdeg` variable ordering and AC-3 constraint propagation.
 //!
 //! References:
 //! - Haralick, R. M., & Elliott, G. L. (1980). *Increasing tree search efficiency for constraint satisfaction problems*.
 //!   Artificial Intelligence, 14(3), 263-313.
 //! - Bitner, J. R., & Reingold, E. M. (1975). *Backtrack programming techniques*. CACM, 18(11), 651-656.
+//! - Boussemart, F., Hemery, F., Lecoutre, C., & Sais, L. (2004). *Boosting systematic search by
+//!   weighting constraints*. ECAI 2004.
 
 use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
-use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
+use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::ScoreCalculator;
 use crate::solver::{
-    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort, select_mrv_variable,
+    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort, select_dom_wdeg_variable,
 };
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Backtracking solver with MRV heuristics and constraint propagation.
+/// Backtracking solver with `dom/wdeg` variable ordering and constraint propagation.
 #[derive(Debug, Default)]
 pub struct BacktrackingSolver {
     propagator: PropagationEngine,
     score_calculator: ScoreCalculator,
+}
+
+/// Mutable bookkeeping threaded through the recursive [`BacktrackingSolver::backtrack`] descent,
+/// bundled to keep the recursive call's argument count manageable.
+struct SearchState<'a> {
+    nodes_count: &'a mut u64,
+    /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
+    /// [`select_dom_wdeg_variable`]). Updated by [`PropagationEngine::propagate`].
+    weights: &'a mut HashMap<ConstraintId, u32>,
 }
 
 impl BacktrackingSolver {
@@ -36,17 +46,25 @@ impl BacktrackingSolver {
 
     /// Solves the given constraint graph, returning the first feasible solution found or `Infeasible`.
     ///
+    /// Variable ordering uses the `dom/wdeg` heuristic (see `select_dom_wdeg_variable`):
+    /// constraints that cause conflicts accumulate weight, so branching increasingly favors
+    /// variables most involved in past failures.
+    ///
     /// # Complexity
-    /// Time: O(d^n) worst-case search tree size, mitigated by MRV variable ordering and AC-3 domain pruning.
+    /// Time: O(d^n) worst-case search tree size, mitigated by `dom/wdeg` variable ordering and
+    /// AC-3 domain pruning.
     /// Space: O(n * d) recursion stack depth and domain snapshot storage.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = TrailedDomains::new(graph.domains().clone());
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
+        let mut weights = HashMap::new();
 
         // Initial AC-3 propagation over full graph
-        if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains)
+        if let PropagationResult::Conflict =
+            self.propagator
+                .propagate(graph, &mut current_domains, Some(&mut weights))
         {
             return SolveOutcome::infeasible(SearchStatistics {
                 nodes_expanded: 0,
@@ -60,7 +78,10 @@ impl BacktrackingSolver {
             &mut assignment,
             options,
             start_time,
-            &mut nodes_count,
+            &mut SearchState {
+                nodes_count: &mut nodes_count,
+                weights: &mut weights,
+            },
         );
         let statistics = SearchStatistics {
             nodes_expanded: nodes_count,
@@ -84,13 +105,13 @@ impl BacktrackingSolver {
         assignment: &mut HashMap<VariableId, i64>,
         options: &SolverOptions,
         start_time: Instant,
-        nodes_count: &mut u64,
+        state: &mut SearchState,
     ) -> bool {
-        if check_abort(options, start_time, *nodes_count).is_some() {
+        if check_abort(options, start_time, *state.nodes_count).is_some() {
             return false;
         }
 
-        *nodes_count += 1;
+        *state.nodes_count += 1;
 
         // If all variables are assigned, verify satisfaction
         if assignment.len() == graph.variables().len() {
@@ -98,8 +119,8 @@ impl BacktrackingSolver {
             return score.is_feasible();
         }
 
-        // Select next variable via MRV heuristic
-        let var_id = match select_mrv_variable(graph, domains, assignment) {
+        // Select next variable via dom/wdeg heuristic
+        let var_id = match select_dom_wdeg_variable(graph, domains, assignment, state.weights) {
             Some(v) => v,
             None => return assignment.len() == graph.variables().len(),
         };
@@ -120,8 +141,10 @@ impl BacktrackingSolver {
             }
 
             // Propagate constraints
-            if let PropagationResult::Success { .. } = self.propagator.propagate(graph, domains)
-                && self.backtrack(graph, domains, assignment, options, start_time, nodes_count)
+            if let PropagationResult::Success { .. } =
+                self.propagator
+                    .propagate(graph, domains, Some(state.weights))
+                && self.backtrack(graph, domains, assignment, options, start_time, state)
             {
                 return true;
             }

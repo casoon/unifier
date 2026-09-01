@@ -65,7 +65,8 @@ impl BranchAndBoundSolver {
         let mut best_solution = None;
         let mut best_score = None;
 
-        if let PropagationResult::Conflict = self.propagator.propagate(graph, &mut current_domains)
+        if let PropagationResult::Conflict =
+            self.propagator.propagate(graph, &mut current_domains, None)
         {
             return SolveOutcome::infeasible(SearchStatistics {
                 nodes_expanded: 0,
@@ -179,7 +180,9 @@ impl BranchAndBoundSolver {
                 d.assign(val);
             }
 
-            if let PropagationResult::Success { .. } = self.propagator.propagate(graph, domains) {
+            if let PropagationResult::Success { .. } =
+                self.propagator.propagate(graph, domains, None)
+            {
                 exhaustive &= self.search(graph, domains, assignment, options, start_time, state);
             }
 

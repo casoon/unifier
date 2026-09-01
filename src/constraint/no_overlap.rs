@@ -6,7 +6,9 @@
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 //! - Vilím, P. (2004). *O(n log n) filtering algorithms for unary resource constraint*. CPAIOR 2004, LNCS 3049.
 
-use crate::constraint::{Constraint, PropagationResult, domain_bounds, duration_as_i64, prune};
+use crate::constraint::{
+    Constraint, PropagationResult, domain_bounds, duration_as_i64, energetic_overload, prune,
+};
 use crate::model::domain::TrailedDomains;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
@@ -87,6 +89,23 @@ impl Constraint for NoOverlap {
         let mut changed = false;
         let n = self.tasks.len();
 
+        // Energetic-reasoning overload check (see `energetic_overload`'s doc comment): catches
+        // infeasibilities that require reasoning about 3+ tasks together, which the pairwise
+        // precedence pushing below cannot see. Unary resource, so capacity is 1 and each task's
+        // "energy" is just its duration (implicit demand 1).
+        let energy_windows: Vec<(i64, i64, i64)> = self
+            .tasks
+            .iter()
+            .filter_map(|task| {
+                let (min, max) = domain_bounds(domains, task.start)?;
+                let lct = max.saturating_add(duration_as_i64(task.duration));
+                Some((min, lct, duration_as_i64(task.duration)))
+            })
+            .collect();
+        if energetic_overload(&energy_windows, 1) {
+            return PropagationResult::Conflict;
+        }
+
         for i in 0..n {
             for j in 0..n {
                 if i == j {
@@ -130,5 +149,83 @@ impl Constraint for NoOverlap {
         }
 
         PropagationResult::Success { changed }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::domain::Domain;
+
+    /// Three tasks, duration 2 each, all with start in `[0,3]` (so `est=0`, `lct=3+2=5` for
+    /// each): no *pair* overloads (any two need 4 time units, window is 5 — fits), but all three
+    /// together need 6 time units in a window of 5 — infeasible only as a triple. Pairwise
+    /// precedence pushing (the pre-existing propagation below the new check) cannot see this;
+    /// `energetic_overload` must.
+    #[test]
+    fn test_propagate_detects_triple_overload_beyond_pairwise_reasoning() {
+        let mut domains = HashMap::new();
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        for &v in &[a, b, c] {
+            domains.insert(v, Domain::range(0, 3));
+        }
+        let mut trailed = TrailedDomains::new(domains);
+
+        let constraint = NoOverlap::new(vec![
+            TaskInterval {
+                start: a,
+                duration: 2,
+            },
+            TaskInterval {
+                start: b,
+                duration: 2,
+            },
+            TaskInterval {
+                start: c,
+                duration: 2,
+            },
+        ]);
+
+        assert_eq!(
+            constraint.propagate(&mut trailed),
+            PropagationResult::Conflict
+        );
+    }
+
+    /// Same shape as above but with just enough room (`start` domain widened by 1): total energy
+    /// (6) now exactly fits the window (6), so no conflict — confirms the check isn't
+    /// over-eager/unsound.
+    #[test]
+    fn test_propagate_no_false_conflict_when_energy_exactly_fits() {
+        let mut domains = HashMap::new();
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        for &v in &[a, b, c] {
+            domains.insert(v, Domain::range(0, 4)); // lct = 4+2=6, est=0, window=6, energy=6
+        }
+        let mut trailed = TrailedDomains::new(domains);
+
+        let constraint = NoOverlap::new(vec![
+            TaskInterval {
+                start: a,
+                duration: 2,
+            },
+            TaskInterval {
+                start: b,
+                duration: 2,
+            },
+            TaskInterval {
+                start: c,
+                duration: 2,
+            },
+        ]);
+
+        assert_eq!(
+            constraint.propagate(&mut trailed),
+            PropagationResult::Success { changed: false }
+        );
     }
 }

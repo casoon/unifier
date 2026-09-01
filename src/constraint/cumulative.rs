@@ -8,7 +8,9 @@
 //!   Mathematical and Computer Modelling, 17(7), 57-73.
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
-use crate::constraint::{Constraint, PropagationResult, domain_bounds, duration_as_i64, prune};
+use crate::constraint::{
+    Constraint, PropagationResult, domain_bounds, duration_as_i64, energetic_overload, prune,
+};
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -114,6 +116,23 @@ impl Constraint for Cumulative {
             }
         }
 
+        // Energetic-reasoning overload check (see `energetic_overload`'s doc comment): catches
+        // infeasibilities that require reasoning about 3+ tasks' combined demand, which the
+        // pairwise mandatory-part reasoning below cannot see.
+        let energy_windows: Vec<(i64, i64, i64)> = self
+            .tasks
+            .iter()
+            .filter_map(|task| {
+                let (min, max) = domain_bounds(domains, task.start)?;
+                let lct = max.saturating_add(duration_as_i64(task.duration));
+                let energy = i64::from(task.demand).saturating_mul(duration_as_i64(task.duration));
+                Some((min, lct, energy))
+            })
+            .collect();
+        if energetic_overload(&energy_windows, self.capacity) {
+            return PropagationResult::Conflict;
+        }
+
         // For each task, check if scheduling it at current min would overlap with mandatory parts of other tasks
         // exceeding capacity
         for i in 0..self.tasks.len() {
@@ -154,5 +173,95 @@ impl Constraint for Cumulative {
         }
 
         PropagationResult::Success { changed }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::domain::Domain;
+    use crate::model::variable::VariableId;
+
+    /// Capacity 2, three tasks demand 2 / duration 2 each, all start in `[0,3]` (`est=0`,
+    /// `lct=3+2=5`). Energy per task = demand*duration = 4, sum = 12; capacity*window = 2*5 = 10.
+    /// 12 > 10 -> infeasible as a triple even though no pair overloads (any two: 8 <= 10) and no
+    /// single point's mandatory-part demand exceeds capacity (durations don't force an overlap at
+    /// any one instant given the domain width) — only energetic reasoning over all three sees it.
+    #[test]
+    fn test_propagate_detects_triple_energy_overload_beyond_mandatory_parts() {
+        let mut domains = HashMap::new();
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        for &v in &[a, b, c] {
+            domains.insert(v, Domain::range(0, 3));
+        }
+        let mut trailed = TrailedDomains::new(domains);
+
+        let constraint = Cumulative::new(
+            vec![
+                TaskDemand {
+                    start: a,
+                    duration: 2,
+                    demand: 2,
+                },
+                TaskDemand {
+                    start: b,
+                    duration: 2,
+                    demand: 2,
+                },
+                TaskDemand {
+                    start: c,
+                    duration: 2,
+                    demand: 2,
+                },
+            ],
+            2,
+        );
+
+        assert_eq!(
+            constraint.propagate(&mut trailed),
+            PropagationResult::Conflict
+        );
+    }
+
+    /// Same triple, but capacity 2 with demand 1 each (energy sum 6 <= capacity*window 10): the
+    /// extra concurrency headroom must NOT trigger a false conflict.
+    #[test]
+    fn test_propagate_no_false_conflict_with_enough_capacity() {
+        let mut domains = HashMap::new();
+        let a = VariableId(0);
+        let b = VariableId(1);
+        let c = VariableId(2);
+        for &v in &[a, b, c] {
+            domains.insert(v, Domain::range(0, 3));
+        }
+        let mut trailed = TrailedDomains::new(domains);
+
+        let constraint = Cumulative::new(
+            vec![
+                TaskDemand {
+                    start: a,
+                    duration: 2,
+                    demand: 1,
+                },
+                TaskDemand {
+                    start: b,
+                    duration: 2,
+                    demand: 1,
+                },
+                TaskDemand {
+                    start: c,
+                    duration: 2,
+                    demand: 1,
+                },
+            ],
+            2,
+        );
+
+        assert_eq!(
+            constraint.propagate(&mut trailed),
+            PropagationResult::Success { changed: false }
+        );
     }
 }

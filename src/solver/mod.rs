@@ -20,7 +20,7 @@ pub use pathwise_bridge::UnifierProblemAdapter;
 
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
-use crate::propagation::graph::ConstraintGraph;
+use crate::propagation::graph::{ConstraintGraph, ConstraintId};
 use crate::score::HardSoftScore;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -212,6 +212,64 @@ pub(crate) fn select_mrv_variable(
                 min_domain_size = len;
                 best_var = Some(var_id);
             }
+        }
+    }
+
+    best_var
+}
+
+/// `dom/wdeg` variable-ordering heuristic: among unassigned variables, picks the one minimizing
+/// `domain_size / weighted_degree`, where `weighted_degree` is the sum of `weights` (initialized
+/// to 1, incremented by [`crate::propagation::engine::PropagationEngine::propagate`] each time a
+/// constraint causes a conflict) over constraints connecting `var` to at least one other
+/// still-unassigned variable. Constraints that repeatedly cause conflicts accumulate weight, so
+/// the heuristic increasingly favors branching on the variables most involved in past failures —
+/// "fail-first" driven by learned conflict history rather than domain size alone.
+///
+/// Currently used only by [`crate::solver::BacktrackingSolver`] (see
+/// `plan/11-search-heuristics-and-global-constraints.md`, part A).
+///
+/// # Complexity
+/// Time: O(N * D) where N is number of variables and D is the max constraint degree per
+/// variable. Space: O(1) beyond the caller-owned `weights` map.
+///
+/// # References
+/// Boussemart, F., Hemery, F., Lecoutre, C., & Sais, L. (2004). *Boosting systematic search by
+/// weighting constraints*. ECAI 2004.
+pub(crate) fn select_dom_wdeg_variable(
+    graph: &ConstraintGraph,
+    domains: &HashMap<VariableId, Domain>,
+    assignment: &HashMap<VariableId, i64>,
+    weights: &HashMap<ConstraintId, u32>,
+) -> Option<VariableId> {
+    let mut best_var = None;
+    let mut best_ratio = f64::INFINITY;
+
+    for &var_id in graph.variables().keys() {
+        if assignment.contains_key(&var_id) {
+            continue;
+        }
+        let Some(domain) = domains.get(&var_id) else {
+            continue;
+        };
+        let dom_size = domain.len().max(1) as f64;
+
+        let mut weighted_degree: u64 = 0;
+        for &cid in graph.constraints_for_variable(var_id) {
+            if let Some(constraint) = graph.get_constraint(cid) {
+                let connects_unassigned_other = constraint
+                    .scope()
+                    .iter()
+                    .any(|&v| v != var_id && !assignment.contains_key(&v));
+                if connects_unassigned_other {
+                    weighted_degree += u64::from(*weights.get(&cid).unwrap_or(&1));
+                }
+            }
+        }
+        let ratio = dom_size / (weighted_degree.max(1) as f64);
+        if ratio < best_ratio {
+            best_ratio = ratio;
+            best_var = Some(var_id);
         }
     }
 
