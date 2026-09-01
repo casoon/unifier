@@ -52,10 +52,12 @@ cancellable at any point.
   preference to maximize), aggregated into a `HardSoftScore`
 - **Interval / Resource / Activity / Group** — scheduling-oriented data
   types (start/duration/end, capacity, resource demands, grouped
-  activities sharing one interval); currently plain data objects the
-  DSL wires into `Equal`/`NoOverlap`/`Cumulative` constraints, not yet a
-  first-class part of the constraint graph itself (see
-  `plan/09-project-reevaluation-roadmap.md`)
+  activities sharing one interval). `ModelBuilder::compile_scheduling_model`
+  compiles them into the constraint graph automatically (`Cumulative` for
+  capacity > 1 resources, `NoOverlap` for unary ones, `LessThanOrEqual`
+  pairs for group containment), plus calendar exclusions, optional
+  (presence-gated) activities, resource alternatives, and a tardiness
+  objective helper — see `plan/12-scheduling-vertical.md`
 
 The problem itself is modeled as a **constraint graph** (a hypergraph of
 variables, constraints, and objectives), not a tree — the tree only
@@ -68,17 +70,21 @@ constraint parameters) before a solver ever sees them.
 
 `pathwise` provides the generic `Problem`/`OptimizationProblem` traits
 and interchangeable search/optimization strategies (A*, branch and
-bound, local search, simulated annealing, ...). `unifier`'s
-`UnifierProblemAdapter` implements those traits so a `unifier` model can
-be driven by `pathwise`'s generic algorithms. Today this is a formal
-bridge rather than the primary search path: `unifier` ships its own
-CSP/COP-specialized solvers (constraint propagation — mostly bounds- and
-singleton-consistency, not full arc consistency for every global
-constraint — MRV/fail-first variable ordering, and Branch & Bound with
-its own optimistic-bound pruning) rather than routing through
-`pathwise`'s engines. Whether `pathwise` becomes the actual search
-runtime or stays an optional integration point is an open question, see
-`plan/09-project-reevaluation-roadmap.md`.
+bound, local search, simulated annealing, ...). `unifier` does not
+implement those traits or route search through `pathwise`'s generic
+algorithms. It ships its own CSP/COP-specialized solver stack:
+constraint propagation (full generalized arc consistency for
+`AllDifferent` via Régin's matching + SCC algorithm; bounds-
+/singleton-consistency plus energetic-reasoning overload detection and,
+for `NoOverlap`, edge-finding bound-tightening for the scheduling
+constraints; AC-3 otherwise), `dom/wdeg` and MRV/fail-first variable
+ordering, reversible (checkpoint/undo) domains instead of cloning per
+search node, and Branch & Bound with its own optimistic-bound pruning.
+What `unifier` does share with `pathwise`: two generic, CSP-independent
+portfolio-coordination primitives — a cancellation token and a shared
+incumbent for anytime/parallel search coordination
+(`pathwise::core::cancellation`, `pathwise::core::incumbent`) — used by
+`unifier`'s solvers instead of duplicating that logic locally.
 
 See `plan/01-concept.md` for the full architecture (4 layers: DSL,
 constraint model, solver engine, runtime) and the MVP scope for 0.1.

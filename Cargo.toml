@@ -2,9 +2,13 @@
 name = "unifier"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.87"
 description = "Constraint satisfaction / optimization (CSP/COP) modeling and solver framework for Rust, built on pathwise"
 license = "MIT"
 repository = "https://github.com/casoon/unifier"
+readme = "README.md"
+keywords = ["csp", "constraint-solver", "optimization", "scheduling"]
+categories = ["algorithms", "mathematics"]
 
 [dependencies]
 pathwise = { path = "../pathwise" }

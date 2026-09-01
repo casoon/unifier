@@ -102,6 +102,9 @@ impl LocalSearchSolver {
 
             // Generate single variable value change moves
             for (&var_id, domain) in graph.domains() {
+                // Indexing is safe: `current_assignment` starts as a complete assignment (every
+                // `graph.domains()` key) from the initial Backtracking solve, and every move
+                // below only overwrites an existing key's value, never removes one.
                 let current_val = current_assignment[&var_id];
                 for candidate_val in domain.values() {
                     if candidate_val == current_val {

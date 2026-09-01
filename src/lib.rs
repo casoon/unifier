@@ -34,5 +34,5 @@ pub use score::{HardSoftScore, Objective, ScoreCalculator, WeightedSum};
 pub use solver::{
     AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,
     LocalSearchSolver, ParallelSolver, SearchStatistics, Solution, SolveOutcome, SolveStatus,
-    SolverOptions, UnifierProblemAdapter,
+    SolverOptions,
 };

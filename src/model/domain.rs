@@ -367,6 +367,11 @@ impl TrailedDomains {
     /// [`Self::get_mut`] (which records unconditionally) rather than [`Self::mutate`] (which
     /// only records on a confirmed change) — callers that need exactness should prefer `mutate`.
     ///
+    /// # Panics
+    /// If `checkpoint` exceeds the current trail length. Valid checkpoints are values previously
+    /// returned by [`Self::checkpoint`] on this same instance — as with [`Self::undo_to`], a
+    /// checkpoint from before an intervening `undo_to` call is no longer valid.
+    ///
     /// # Complexity
     /// Time: O(K) where K = trail entries since `checkpoint`. Space: O(distinct variables
     /// touched).

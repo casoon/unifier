@@ -8,7 +8,6 @@ pub mod cancellation;
 pub mod lns;
 pub mod local_search;
 pub mod parallel;
-pub mod pathwise_bridge;
 pub mod shared_incumbent;
 
 pub use backtracking::BacktrackingSolver;
@@ -17,7 +16,6 @@ pub use cancellation::{CancellationToken, SearchStatistics};
 pub use lns::LnsSolver;
 pub use local_search::LocalSearchSolver;
 pub use parallel::ParallelSolver;
-pub use pathwise_bridge::UnifierProblemAdapter;
 pub use shared_incumbent::SharedIncumbent;
 
 use crate::model::domain::Domain;
