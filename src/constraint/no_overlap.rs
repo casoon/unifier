@@ -14,7 +14,8 @@
 //! - Carlier, J., & Pinson, E. (1989). *An algorithm for solving the job-shop problem*. Management Science, 35(2), 164-176.
 
 use crate::constraint::{
-    Constraint, PropagationResult, domain_bounds, duration_as_i64, energetic_overload, prune,
+    Assignment, Constraint, Explanation, PropagationResult, domain_bounds, duration_as_i64,
+    energetic_overload, prune,
 };
 use crate::model::domain::TrailedDomains;
 use crate::model::interval::Interval;
@@ -189,6 +190,31 @@ impl Constraint for NoOverlap {
             }
         }
         true
+    }
+
+    fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
+        for (i, first) in self.tasks.iter().enumerate() {
+            for second in &self.tasks[(i + 1)..] {
+                let (Some(&first_start), Some(&second_start)) =
+                    (assignment.get(&first.start), assignment.get(&second.start))
+                else {
+                    continue;
+                };
+                let first_end = first_start.saturating_add(duration_as_i64(first.duration));
+                let second_end = second_start.saturating_add(duration_as_i64(second.duration));
+                if first_end > second_start && second_end > first_start {
+                    return Some(Explanation {
+                        constraint_name: "NoOverlap",
+                        involved: vec![first.start, second.start],
+                        message: format!(
+                            "Intervals [{first_start}, {first_end}) and [{second_start}, \
+                             {second_end}) overlap"
+                        ),
+                    });
+                }
+            }
+        }
+        None
     }
 
     fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {

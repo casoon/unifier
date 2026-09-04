@@ -8,7 +8,7 @@
 //! Reference:
 //! - Baptiste, P., Le Pape, C., & Nuijten, W. (2001). *Constraint-Based Scheduling*. Springer.
 
-use crate::constraint::{Constraint, LessThanOrEqual, PropagationResult};
+use crate::constraint::{Assignment, Constraint, Explanation, LessThanOrEqual, PropagationResult};
 use crate::model::domain::TrailedDomains;
 use crate::model::interval::Interval;
 use crate::model::variable::VariableId;
@@ -43,6 +43,22 @@ impl Constraint for Precedence {
 
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         self.inner.is_satisfied(assignment)
+    }
+
+    fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
+        if self.is_satisfied(assignment) {
+            return None;
+        }
+        let scope = self.scope();
+        let end = assignment[&scope[0]];
+        let start = assignment[&scope[1]];
+        Some(Explanation {
+            constraint_name: "Precedence",
+            involved: scope.to_vec(),
+            message: format!(
+                "Predecessor end {end} is later than the allowed successor start {start}"
+            ),
+        })
     }
 
     fn propagate(&self, domains: &mut TrailedDomains) -> PropagationResult {

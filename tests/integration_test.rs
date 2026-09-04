@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use unifier::constraint::{Cumulative, NotEqual, TaskDemand};
+use unifier::constraint::{Constraint, Cumulative, NotEqual, TaskDemand};
 use unifier::dsl::ModelBuilder;
 use unifier::propagation::ModelError;
 use unifier::score::{HardSoftScore, ScoreCalculator};
@@ -235,6 +235,85 @@ fn test_precedence_and_domain_filtering() {
             outcome.status
         ),
     }
+}
+
+#[test]
+fn test_incremental_check_matches_full_feasibility_without_search() {
+    let mut builder = ModelBuilder::new();
+    let first = builder.new_interval("first", 0..=0, 3, 3..=3);
+    let second = builder.new_interval("second", 0..=4, 3, 3..=7);
+    builder.add_no_overlap(&[first.clone(), second.clone()], &[3, 3]);
+    let graph = builder.build().expect("model should validate");
+
+    let committed = HashMap::from([(first.start(), 0), (first.end(), 3)]);
+    let violations = graph.check_incremental(&committed, &[(second.start(), 1), (second.end(), 4)]);
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].constraint_name, "NoOverlap");
+    assert_eq!(violations[0].involved, vec![first.start(), second.start()]);
+
+    let mut fixed_builder = ModelBuilder::new();
+    let fixed_first = fixed_builder.new_interval("first", 0..=0, 3, 3..=3);
+    let fixed_second = fixed_builder.new_interval("second", 1..=1, 3, 4..=4);
+    fixed_builder.add_no_overlap(&[fixed_first, fixed_second], &[3, 3]);
+    let fixed_graph = fixed_builder.build().expect("model should validate");
+    let outcome = BacktrackingSolver::new().solve(&fixed_graph, &SolverOptions::default());
+    assert_eq!(outcome.status, SolveStatus::Infeasible);
+    assert_eq!(outcome.statistics.nodes_expanded, 0);
+}
+
+#[test]
+fn test_structured_explanations_for_scheduling_constraints() {
+    use unifier::constraint::no_overlap::{NoOverlap, TaskInterval};
+    use unifier::model::interval::DurationSpec;
+    use unifier::{Interval, Precedence};
+
+    let a = VariableId(10);
+    let b = VariableId(11);
+    let no_overlap = NoOverlap::new(vec![
+        TaskInterval {
+            start: a,
+            duration: 3,
+        },
+        TaskInterval {
+            start: b,
+            duration: 3,
+        },
+    ]);
+    let assignment = HashMap::from([(a, 0), (b, 2)]);
+    let explanation = no_overlap.explain(&assignment).expect("overlap explained");
+    assert_eq!(explanation.constraint_name, "NoOverlap");
+    assert_eq!(explanation.involved, vec![a, b]);
+
+    let cumulative = Cumulative::new(
+        vec![
+            TaskDemand {
+                start: a,
+                duration: 3,
+                demand: 2,
+            },
+            TaskDemand {
+                start: b,
+                duration: 3,
+                demand: 1,
+            },
+        ],
+        2,
+    );
+    let explanation = cumulative
+        .explain(&assignment)
+        .expect("capacity overload explained");
+    assert_eq!(explanation.constraint_name, "Cumulative");
+    assert_eq!(explanation.involved, vec![a, b]);
+
+    let predecessor = Interval::new(a, DurationSpec::Fixed(1), VariableId(12));
+    let successor = Interval::new(b, DurationSpec::Fixed(1), VariableId(13));
+    let precedence = Precedence::new(&predecessor, &successor, 1);
+    let assignment = HashMap::from([(VariableId(12), 5), (b, 5)]);
+    let explanation = precedence
+        .explain(&assignment)
+        .expect("precedence violation explained");
+    assert_eq!(explanation.constraint_name, "Precedence");
+    assert_eq!(explanation.involved, vec![VariableId(12), b]);
 }
 
 #[test]

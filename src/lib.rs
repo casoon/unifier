@@ -22,14 +22,17 @@ pub mod score;
 pub mod solver;
 
 pub use constraint::{
-    AllDifferent, AllowedValues, AtLeast, AtMost, Constraint, Cumulative, Equal, ExactlyOne,
-    ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Precedence, TaskDemand,
+    AllDifferent, AllowedValues, Assignment, AtLeast, AtMost, Constraint, Cumulative, Equal,
+    ExactlyOne, Explanation, ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Precedence,
+    TaskDemand,
 };
 pub use dsl::ModelBuilder;
 pub use model::{
     Activity, Domain, Group, Interval, Resource, TrailedDomains, Variable, VariableId,
 };
-pub use propagation::{ConstraintGraph, ModelError, PropagationEngine, ValidatedGraph};
+pub use propagation::{
+    ConstraintGraph, ConstraintViolation, ModelError, PropagationEngine, ValidatedGraph,
+};
 pub use score::{HardSoftScore, Objective, ScoreCalculator, WeightedSum};
 pub use solver::{
     AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,

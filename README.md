@@ -18,10 +18,16 @@ status (`Optimal` / `Feasible` / `Infeasible` / `Aborted(reason)`), the
 best solution found, search statistics, and — for Branch & Bound — a
 score bound.
 
-Not yet covered: conflict explanations / unsat cores, a `serde`-based
-model/solution serialization or CLI, and independent verification of
-production-scale scheduling scenarios — evaluate accordingly before
-relying on this for production planning.
+`ValidatedGraph::check_incremental` additionally evaluates only the
+constraints adjacent to changed assignment variables, without starting a
+solver search. Violations carry structured explanations; specialized
+explanations are implemented for `NoOverlap`, `Cumulative`, and
+`Precedence`.
+
+Not yet covered: general unsat cores, a `serde`-based model/solution
+serialization or CLI, and independent verification of production-scale
+scheduling scenarios — evaluate accordingly before relying on this for
+production planning.
 
 ## Problem class
 

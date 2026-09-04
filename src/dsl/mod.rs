@@ -14,7 +14,7 @@ use crate::model::group::{Group, GroupId};
 use crate::model::interval::{DurationSpec, Interval};
 use crate::model::resource::{Resource, ResourceId};
 use crate::model::variable::{Variable, VariableId};
-use crate::propagation::graph::{ConstraintGraph, ModelError, ValidatedGraph};
+use crate::propagation::graph::{ConstraintGraph, ConstraintId, ModelError, ValidatedGraph};
 use crate::score::{Objective, WeightedSum};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
@@ -303,6 +303,11 @@ impl ModelBuilder {
     /// group referencing an unregistered [`ActivityId`]. Does not consume `self` — callers can
     /// fix the offending inputs and retry, unlike [`Self::build`].
     ///
+    /// On success, returns the exact constraint generated for each used resource. Resources
+    /// without matching activity demands are absent from the map. Consumers that attach domain
+    /// metadata to violations should use this mapping instead of relying on constraint insertion
+    /// order.
+    ///
     /// # Complexity
     /// Time: O(A + D + G*M) where A = `activities.len()`, D = total resource demands across all
     /// activities, G = `groups.len()`, M = average group size.
@@ -311,8 +316,9 @@ impl ModelBuilder {
         activities: &[Activity],
         resources: &[Resource],
         groups: &[Group],
-    ) -> Result<(), Vec<ModelError>> {
+    ) -> Result<HashMap<ResourceId, ConstraintId>, Vec<ModelError>> {
         let mut errors = Vec::new();
+        let mut resource_constraints = HashMap::new();
         let resource_by_id: HashMap<ResourceId, &Resource> =
             resources.iter().map(|r| (r.id(), r)).collect();
         let activity_by_id: HashMap<ActivityId, &Activity> =
@@ -364,7 +370,8 @@ impl ModelBuilder {
                         },
                     })
                     .collect();
-                self.graph.add_constraint(Arc::new(NoOverlap::new(tasks)));
+                let constraint_id = self.graph.add_constraint(Arc::new(NoOverlap::new(tasks)));
+                resource_constraints.insert(resource.id(), constraint_id);
             } else {
                 let tasks: Vec<TaskDemand> = demands
                     .iter()
@@ -379,8 +386,10 @@ impl ModelBuilder {
                         demand: *demand,
                     })
                     .collect();
-                self.graph
+                let constraint_id = self
+                    .graph
                     .add_constraint(Arc::new(Cumulative::new(tasks, resource.capacity())));
+                resource_constraints.insert(resource.id(), constraint_id);
             }
         }
 
@@ -407,7 +416,7 @@ impl ModelBuilder {
         }
 
         if errors.is_empty() {
-            Ok(())
+            Ok(resource_constraints)
         } else {
             Err(errors)
         }
@@ -795,10 +804,16 @@ mod tests {
         let mut lesson_b = builder.new_activity("lesson_b", interval_b);
         lesson_b.require_resource(room.id(), 1);
 
-        builder
+        let resource_constraints = builder
             .compile_scheduling_model(&[lesson_a.clone(), lesson_b.clone()], &[room], &[])
             .expect("valid scheduling model");
+        assert_eq!(resource_constraints.len(), 1);
+        let room_constraint = resource_constraints[&lesson_a.demands()[0].resource_id];
         let graph = builder.build().expect("model should validate");
+        assert_eq!(
+            graph.get_constraint(room_constraint).unwrap().name(),
+            "NoOverlap"
+        );
 
         let outcome = BacktrackingSolver::new().solve(&graph, &SolverOptions::default());
         let solution = outcome.solution.expect("feasible: rooms can be staggered");

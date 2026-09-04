@@ -9,7 +9,8 @@
 //! - Wolf, A. (2003). *Pruning Algorithms for the Cumulative Constraint*. Workshop on Constraint Solving.
 
 use crate::constraint::{
-    Constraint, PropagationResult, domain_bounds, duration_as_i64, energetic_overload, prune,
+    Assignment, Constraint, Explanation, PropagationResult, domain_bounds, duration_as_i64,
+    energetic_overload, prune,
 };
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
@@ -91,6 +92,42 @@ impl Constraint for Cumulative {
         }
 
         true
+    }
+
+    fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
+        let mut time_points: Vec<i64> = self
+            .tasks
+            .iter()
+            .filter_map(|task| assignment.get(&task.start).copied())
+            .collect();
+        time_points.sort_unstable();
+        time_points.dedup();
+
+        for time in time_points {
+            let active: Vec<&TaskDemand> = self
+                .tasks
+                .iter()
+                .filter(|task| {
+                    assignment.get(&task.start).is_some_and(|&start| {
+                        time >= start && time < start.saturating_add(duration_as_i64(task.duration))
+                    })
+                })
+                .collect();
+            let demand = active
+                .iter()
+                .fold(0u32, |total, task| total.saturating_add(task.demand));
+            if demand > self.capacity {
+                return Some(Explanation {
+                    constraint_name: "Cumulative",
+                    involved: active.iter().map(|task| task.start).collect(),
+                    message: format!(
+                        "Resource demand {demand} at time {time} exceeds capacity {}",
+                        self.capacity
+                    ),
+                });
+            }
+        }
+        None
     }
 
     fn validate(&self) -> Result<(), String> {

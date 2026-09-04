@@ -7,7 +7,7 @@
 //! - Laborie, P. (2003). *IBOCP: A declarative framework for constraint-based scheduling*.
 //!   Artificial Intelligence, 146(2), 257-302. (Optional/interval-presence reasoning.)
 
-use crate::constraint::{Constraint, PropagationResult};
+use crate::constraint::{Assignment, Constraint, Explanation, PropagationResult};
 use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
 use std::collections::HashMap;
@@ -78,6 +78,13 @@ impl Constraint for Optional {
             // branch applies, so — per this crate's "partial assignment doesn't yet violate"
             // convention — not (yet) a violation.
             _ => true,
+        }
+    }
+
+    fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
+        match assignment.get(&self.presence) {
+            Some(1) => self.inner.explain(assignment),
+            _ => None,
         }
     }
 

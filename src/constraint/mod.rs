@@ -31,6 +31,20 @@ use crate::model::variable::VariableId;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+/// Concrete values assigned to decision variables.
+pub type Assignment = HashMap<VariableId, i64>;
+
+/// Structured explanation of one violated constraint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explanation {
+    /// Stable constraint type name.
+    pub constraint_name: &'static str,
+    /// Variables that concretely participate in the violation.
+    pub involved: Vec<VariableId>,
+    /// Human-readable English explanation intended for logs or direct display.
+    pub message: String,
+}
+
 /// Result of a domain propagation step executed by a constraint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropagationResult {
@@ -60,6 +74,17 @@ pub trait Constraint: Debug + Send + Sync {
     /// Returns `true` if all variables in scope are assigned and satisfy the condition,
     /// or if unassigned variables do not violate the constraint yet.
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool;
+
+    /// Explains a concrete violation, or returns `None` when the assignment does not violate
+    /// this constraint or the implementation has no specialized explanation.
+    ///
+    /// # Complexity
+    /// At most the complexity of [`Self::is_satisfied`]; implementations may inspect the
+    /// constraint scope once more to identify the concrete participants.
+    fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
+        let _ = assignment;
+        None
+    }
 
     /// Enforces arc/bounds consistency by pruning inconsistent values from variable domains.
     ///

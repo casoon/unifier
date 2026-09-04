@@ -7,7 +7,7 @@
 //! - Dechter, R. (2003). *Constraint Processing*. Morgan Kaufmann. Chapter 2: Constraint Networks.
 //! - Rossi, F., van Beek, P., & Walsh, T. (2006). *Handbook of Constraint Programming*. Elsevier.
 
-use crate::constraint::Constraint;
+use crate::constraint::{Assignment, Constraint};
 use crate::model::domain::Domain;
 use crate::model::variable::{Variable, VariableId};
 use crate::score::Objective;
@@ -18,6 +18,19 @@ use std::sync::Arc;
 /// Unique identifier for a constraint registered in the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConstraintId(pub u32);
+
+/// One constraint violation found by an incremental assignment check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstraintViolation {
+    /// Constraint within the validated graph.
+    pub constraint_id: ConstraintId,
+    /// Stable or implementation-provided constraint name.
+    pub constraint_name: String,
+    /// Variables concretely involved in the violation.
+    pub involved: Vec<VariableId>,
+    /// Human-readable English explanation.
+    pub message: String,
+}
 
 impl fmt::Display for ConstraintId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -278,6 +291,55 @@ impl ValidatedGraph {
     #[inline]
     pub fn graph(&self) -> &ConstraintGraph {
         &self.0
+    }
+
+    /// Checks an assignment delta by evaluating only constraints adjacent to changed variables.
+    ///
+    /// `proposed` is overlaid on `committed`; repeated proposed variables use their last value.
+    /// No propagation or search tree is started. Constraints not touching a proposed variable
+    /// are deliberately skipped because their truth value cannot have changed.
+    ///
+    /// # Complexity
+    /// Time: O(P + A + C_changed), where P is the proposal size, A the committed assignment
+    /// size copied for the overlay, and C_changed the total evaluation cost of distinct adjacent
+    /// constraints. Space: O(A + C_changed).
+    pub fn check_incremental(
+        &self,
+        committed: &Assignment,
+        proposed: &[(VariableId, i64)],
+    ) -> Vec<ConstraintViolation> {
+        let mut assignment = committed.clone();
+        let mut affected = std::collections::BTreeSet::new();
+
+        for &(variable, value) in proposed {
+            assignment.insert(variable, value);
+            affected.extend(self.constraints_for_variable(variable));
+        }
+
+        affected
+            .into_iter()
+            .filter_map(|constraint_id| {
+                let constraint = self.get_constraint(constraint_id)?;
+                if constraint.is_satisfied(&assignment) {
+                    return None;
+                }
+                let explanation = constraint.explain(&assignment);
+                Some(ConstraintViolation {
+                    constraint_id,
+                    constraint_name: explanation.as_ref().map_or_else(
+                        || constraint.name().to_string(),
+                        |e| e.constraint_name.into(),
+                    ),
+                    involved: explanation
+                        .as_ref()
+                        .map_or_else(|| constraint.scope().to_vec(), |e| e.involved.clone()),
+                    message: explanation.map_or_else(
+                        || format!("{} constraint is violated", constraint.name()),
+                        |e| e.message,
+                    ),
+                })
+            })
+            .collect()
     }
 
     /// Wraps `graph` as validated without re-running [`ConstraintGraph::validate`].

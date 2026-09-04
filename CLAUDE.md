@@ -35,13 +35,11 @@ Problemstruktur ist ein **Constraint-Graph**, kein Baum — der Baum
 entsteht erst im Lösungsprozess eines Solvers (Backtracking-Suchbaum,
 Branch-and-Bound-Zweige).
 
-Langfristige Stoßrichtung (nicht Teil von 0.1, nur Kontext): `unifier`
-ist Phase 3 des in `pathwise`s `plan/01-concept.md` skizzierten Stapels
-`pathwise → unifier (constraint solver) → scheduling framework →
-Stundenplanung`. Ob das Scheduling-Framework (Activity/Interval/Resource
-als eigenständige DSL-Schicht) Teil von `unifier` bleibt oder ein
-eigenes Crate wird, ist offen (siehe `plan/01-concept.md`, "Offene
-Fragen").
+`unifier` ist die CSP/COP-Schicht im Stapel
+`pathwise → unifier → schedulr → Anwendungen`. Die vorhandenen
+Scheduling-Primitives (`Activity`, `Interval`, `Resource`, `Group`) und
+deren Compiler bleiben als Unterbau in `unifier`; `schedulr` kapselt sie
+hinter seinem domänenneutralen API und ergänzt Zustands-/Buchungslogik.
 
 ## Arbeitsweise
 
