@@ -1,0 +1,36 @@
+---
+title: API overview
+sidebarLabel: API overview
+description: The public modules and their main types. Every item is documented on docs.rs.
+order: 1
+---
+
+The crate root re-exports the types most programs need, so `use unifier::...` is usually
+enough. The modules follow the layers of the design: a problem-building surface (`dsl`), the
+constraint model (`model`, `constraint`, `propagation`, `score`) and the solver engine
+(`solver`).
+
+| Module | Main items | Purpose |
+| --- | --- | --- |
+| `dsl` | `ModelBuilder` | Builds a model and validates it with `build()` |
+| `model` | `Variable`, `VariableId`, `Domain`, `Interval`, `Activity`, `Resource`, `Group`, `TrailedDomains` | Variables, domains and scheduling data |
+| `constraint` | `Constraint`, `AllDifferent`, `NoOverlap`, `Cumulative`, `Precedence`, … | The constraint trait and the built-in constraints |
+| `propagation` | `ConstraintGraph`, `ValidatedGraph`, `PropagationEngine`, `ModelError`, `ConstraintViolation` | The constraint graph, validation and AC-3 propagation |
+| `score` | `HardSoftScore`, `Objective`, `WeightedSum`, `ScoreCalculator` | Hard/soft scoring and objectives |
+| `solver` | `BacktrackingSolver`, `BranchAndBoundSolver`, `LocalSearchSolver`, `LnsSolver`, `ParallelSolver`, `SolverOptions`, `SolveOutcome`, `SolveStatus` | Search strategies and their results |
+
+Every public function and constraint documents its complexity and the paper or textbook it is
+based on.
+
+## Item-level documentation
+
+The full API, generated from the source, is on
+[docs.rs/unifier/0.1.1](https://docs.rs/unifier/0.1.1/unifier/). The package page is
+[crates.io/crates/unifier](https://crates.io/crates/unifier).
+
+## Examples
+
+The programs in [`examples/`](https://github.com/casoon/unifier/tree/master/examples) use only
+the public API: `nqueens`, `map_coloring`, `job_shop` and `scheduling_demo` are shown in the
+[showcase](../../../showcase/); `bench_search` is a throughput benchmark over a small problem
+corpus.
