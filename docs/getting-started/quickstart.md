@@ -54,12 +54,14 @@ fn main() {
 
 ```text
 status: Optimal
-score:  Feasible(-6)
-a = 1, b = 3, c = 2
+score:  Feasible(strong=0, medium=0, weak=-6)
+a = 1, b = 2, c = 3
 ```
 
 `Optimal` means Branch & Bound searched the whole space and proved that no better score exists.
-`Feasible(-6)` is the score: all hard constraints hold, and the minimized sum is 6. Slots 1, 2
+`Feasible(strong=0, medium=0, weak=-6)` is the score: all hard constraints hold, and the
+minimized sum is 6. The objective sits on the default `weak` level; the
+[modelling guide](../../guides/modelling/#objectives-and-scores) explains the levels. Slots 1, 2
 and 3 are the earliest possible, but they can be distributed in several ways that satisfy
 `a < b`; which of these equally good assignments you get can differ between runs.
 

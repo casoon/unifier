@@ -41,11 +41,11 @@ println!("{:?}", outcome.status); // Optimal`;
     title="Model constraint problems in Rust. Solve them anytime."
     lead="unifier models constraint satisfaction and optimization problems – variables, domains, constraints, weighted objectives – and solves them with interchangeable strategies, from exhaustive search that proves optimality to local search and a parallel portfolio."
   >
-    <Install commands={[{ label: 'cargo', command: 'cargo add unifier@0.1' }]} />
+    <Install commands={[{ label: 'cargo', command: 'cargo add unifier' }]} />
     <Badges>
       <Badge>MIT</Badge>
       <Badge tone="brand">early</Badge>
-      <Badge>crates.io 0.1.1</Badge>
+      <Badge>crates.io 0.3.1</Badge>
       <Badge>Rust 1.87+</Badge>
     </Badges>
     <Terminal slot="output" title="cargo run --example job_shop" dots ansi={output('job_shop')} />
@@ -54,7 +54,7 @@ println!("{:?}", outcome.status); // Optimal`;
   <Facts
     items={[
       { value: '5', label: 'interchangeable solver strategies' },
-      { value: '12', label: 'built-in constraints, three of them global' },
+      { value: '13', label: 'built-in constraints in 0.3.1, three of them global' },
       { value: '4', label: 'outcome states: Optimal, Feasible, Infeasible, Aborted' },
       { value: '1', label: 'runtime dependency (pathwise)' },
     ]}
@@ -91,7 +91,7 @@ println!("{:?}", outcome.status); // Optimal`;
   <Quickstart
     lead="From a model to a proven optimum. The full walkthrough lives in the documentation."
     steps={[
-      'Add the crate with <code>cargo add unifier@0.1</code>.',
+      'Add the crate with <code>cargo add unifier</code>.',
       'Declare variables, constraints and objectives with <code>ModelBuilder</code>.',
       'Validate with <code>build()</code>, then pass the graph to a solver.',
     ]}

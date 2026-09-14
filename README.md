@@ -10,7 +10,7 @@ integration currently goes).
 
 ## Status
 
-Early (`0.1.x`), published to crates.io. The core model, constraint
+Early (`0.3.x`), published to crates.io; see [CHANGELOG.md](CHANGELOG.md). The core model, constraint
 propagation, global constraints, hard/soft scoring with weighted
 objectives, fallible model validation (`ConstraintGraph::validate` /
 `ModelBuilder::build`), and five solver strategies (Backtracking,
@@ -52,10 +52,13 @@ cancellable at any point.
   the middle of a range
 - **Constraint** — `Equal`, `NotEqual`, `LessThanOrEqual`,
   `AllDifferent`, `NoOverlap`, `Cumulative`, `Precedence`,
-  `AllowedValues`/`ForbiddenValues`, `ExactlyOne`/`AtMost`/`AtLeast`
+  `AllowedValues`/`ForbiddenValues`, `ExactlyOne`/`AtMost`/`AtLeast`,
+  `PeriodicValues`; on `master` but not yet released: `MinimumDistance`,
+  `MaximumBucketLoad`, `BucketBlockPattern`
 - **Objective** — `WeightedSum` soft-score terms (hard constraints are
   never violated in a feasible solution; soft terms are a weighted
-  preference to maximize), aggregated into a `HardSoftScore`
+  preference to maximize), aggregated into a `HardSoftScore` with
+  lexicographic `strong` / `medium` / `weak` soft levels
 - **Interval / Resource / Activity / Group** — scheduling-oriented data
   types (start/duration/end, capacity, resource demands, grouped
   activities sharing one interval). `ModelBuilder::compile_scheduling_model`
@@ -101,7 +104,7 @@ and runtime (incremental scoring, cancellation).
 
 ```toml
 [dependencies]
-unifier = "0.1"
+unifier = "0.3"
 ```
 
 ## License

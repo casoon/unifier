@@ -16,7 +16,7 @@ constraint model (`model`, `constraint`, `propagation`, `score`) and the solver 
 | `model` | `Variable`, `VariableId`, `Domain`, `Interval`, `Activity`, `Resource`, `Group`, `TrailedDomains` | Variables, domains and scheduling data |
 | `constraint` | `Constraint`, `AllDifferent`, `NoOverlap`, `Cumulative`, `Precedence`, … | The constraint trait and the built-in constraints |
 | `propagation` | `ConstraintGraph`, `ValidatedGraph`, `PropagationEngine`, `ModelError`, `ConstraintViolation` | The constraint graph, validation and AC-3 propagation |
-| `score` | `HardSoftScore`, `Objective`, `WeightedSum`, `ScoreCalculator` | Hard/soft scoring and objectives |
+| `score` | `HardSoftScore`, `ScoreLevel`, `Objective`, `CategorizedObjective`, `WeightedSum`, `ScoreCalculator` | Hard/soft scoring on lexicographic levels, and objectives |
 | `solver` | `BacktrackingSolver`, `BranchAndBoundSolver`, `LocalSearchSolver`, `LnsSolver`, `ParallelSolver`, `SolverOptions`, `SolveOutcome`, `SolveStatus` | Search strategies and their results |
 
 Every public function and constraint documents its complexity and the paper or textbook it is
@@ -25,8 +25,9 @@ based on.
 ## Item-level documentation
 
 The full API, generated from the source, is on
-[docs.rs/unifier/0.1.1](https://docs.rs/unifier/0.1.1/unifier/). The package page is
-[crates.io/crates/unifier](https://crates.io/crates/unifier).
+[docs.rs/unifier/0.3.1](https://docs.rs/unifier/0.3.1/unifier/). The package page is
+[crates.io/crates/unifier](https://crates.io/crates/unifier). Items added on the default branch
+after 0.3.1 appear on docs.rs with the next release.
 
 ## Examples
 
