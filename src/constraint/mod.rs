@@ -5,11 +5,13 @@
 //! - van Hoeve, W. J., & Katriel, I. (2006). *Global Constraints*. Handbook of Constraint Programming, Chapter 6.
 
 pub mod all_different;
+pub mod bucket_load;
 pub mod cardinality;
 pub mod cumulative;
 pub mod domain_filter;
 pub mod equal;
 pub mod less_than;
+pub mod minimum_distance;
 pub mod no_overlap;
 pub mod not_equal;
 pub mod optional;
@@ -17,11 +19,13 @@ pub mod periodic_values;
 pub mod precedence;
 
 pub use all_different::AllDifferent;
+pub use bucket_load::{BucketBlockPattern, BucketRange, BucketedTask, MaximumBucketLoad};
 pub use cardinality::{AtLeast, AtMost, ExactlyOne};
 pub use cumulative::{Cumulative, TaskDemand};
 pub use domain_filter::{AllowedValues, ForbiddenValues};
 pub use equal::Equal;
 pub use less_than::LessThanOrEqual;
+pub use minimum_distance::MinimumDistance;
 pub use no_overlap::NoOverlap;
 pub use not_equal::NotEqual;
 pub use optional::Optional;

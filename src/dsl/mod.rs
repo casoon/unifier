@@ -5,9 +5,9 @@
 
 use crate::constraint::no_overlap::TaskInterval;
 use crate::constraint::{
-    AllDifferent, AllowedValues, AtLeast, AtMost, Constraint, Cumulative, Equal, ExactlyOne,
-    ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Optional, PeriodicValues, Precedence,
-    TaskDemand,
+    AllDifferent, AllowedValues, AtLeast, AtMost, BucketBlockPattern, BucketRange, BucketedTask,
+    Constraint, Cumulative, Equal, ExactlyOne, ForbiddenValues, LessThanOrEqual, MaximumBucketLoad,
+    MinimumDistance, NoOverlap, NotEqual, Optional, PeriodicValues, Precedence, TaskDemand,
 };
 use crate::model::activity::{Activity, ActivityId};
 use crate::model::domain::Domain;
@@ -242,6 +242,46 @@ impl ModelBuilder {
     pub fn add_cumulative(&mut self, tasks: Vec<TaskDemand>, capacity: u32) {
         self.graph
             .add_constraint(Arc::new(Cumulative::new(tasks, capacity)));
+    }
+
+    /// Adds a [`MaximumBucketLoad`] cap: the summed occupied time of `tasks` inside every
+    /// [`BucketRange`] must stay within `limit`. Unlike [`Self::add_cumulative`] the cap applies to
+    /// a whole bucket (e.g. one day) rather than to each instant.
+    pub fn add_maximum_bucket_load(
+        &mut self,
+        tasks: impl IntoIterator<Item = BucketedTask>,
+        ranges: impl IntoIterator<Item = BucketRange>,
+        limit: i64,
+    ) {
+        self.graph
+            .add_constraint(Arc::new(MaximumBucketLoad::new(tasks, ranges, limit)));
+    }
+
+    /// Adds a [`MinimumDistance`] constraint `|first - second| >= min_distance`.
+    pub fn add_minimum_distance(
+        &mut self,
+        first: VariableId,
+        second: VariableId,
+        min_distance: i64,
+    ) {
+        self.graph
+            .add_constraint(Arc::new(MinimumDistance::new(first, second, min_distance)));
+    }
+
+    /// Adds a [`BucketBlockPattern`] constraint: the consecutive blocks the `tasks` occupy inside
+    /// the [`BucketRange`]s must form one of `allowed`, order irrelevant.
+    ///
+    /// Unlike [`Self::add_maximum_bucket_load`], which caps the *summed* load per bucket, this
+    /// constrains the *shape* — `[2, 1, 1]` means one block of two plus two single blocks, however
+    /// the buckets are distributed.
+    pub fn add_bucket_block_pattern(
+        &mut self,
+        tasks: impl IntoIterator<Item = BucketedTask>,
+        ranges: impl IntoIterator<Item = BucketRange>,
+        allowed: impl IntoIterator<Item = Vec<i64>>,
+    ) {
+        self.graph
+            .add_constraint(Arc::new(BucketBlockPattern::new(tasks, ranges, allowed)));
     }
 
     /// Adds a custom soft objective term to the model.

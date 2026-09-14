@@ -22,9 +22,10 @@ pub mod score;
 pub mod solver;
 
 pub use constraint::{
-    AllDifferent, AllowedValues, Assignment, AtLeast, AtMost, Constraint, Cumulative, Equal,
-    ExactlyOne, Explanation, ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, PeriodicValues,
-    Precedence, TaskDemand,
+    AllDifferent, AllowedValues, Assignment, AtLeast, AtMost, BucketRange, BucketedTask,
+    Constraint, Cumulative, Equal, ExactlyOne, Explanation, ForbiddenValues, LessThanOrEqual,
+    MaximumBucketLoad, MinimumDistance, NoOverlap, NotEqual, PeriodicValues, Precedence,
+    TaskDemand,
 };
 pub use dsl::ModelBuilder;
 pub use model::{
