@@ -10,6 +10,8 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-14
+
 ### Added
 
 - `MinimumDistance` constraint and `ModelBuilder::add_minimum_distance`: two variables must be at

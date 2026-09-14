@@ -42,12 +42,11 @@ built-in constraint:
 | `NoOverlap` | `add_no_overlap(intervals, durations)` | intervals never run at the same time |
 | `Cumulative` | `add_cumulative(tasks, capacity)` | summed demand never exceeds `capacity` |
 | `PeriodicValues` | `add_periodic_calendar(var, period, offsets, unavailable)` | `var` falls on an allowed offset of a repeating period and outside the unavailable ranges |
-| `MinimumDistance` (unreleased) | `add_minimum_distance(first, second, d)` | `first` and `second` are at least `d` apart |
-| `MaximumBucketLoad` (unreleased) | `add_maximum_bucket_load(tasks, ranges, limit)` | summed load inside each bucket never exceeds `limit` |
-| `BucketBlockPattern` (unreleased) | `add_bucket_block_pattern(tasks, ranges, allowed)` | the occupied blocks form one of the `allowed` shapes |
+| `MinimumDistance` | `add_minimum_distance(first, second, d)` | `first` and `second` are at least `d` apart |
+| `MaximumBucketLoad` | `add_maximum_bucket_load(tasks, ranges, limit)` | summed load inside each bucket never exceeds `limit` |
+| `BucketBlockPattern` | `add_bucket_block_pattern(tasks, ranges, allowed)` | the occupied blocks form one of the `allowed` shapes |
 
-Constraints marked *unreleased* are on the repository's default branch but not in unifier 0.3.1
-on crates.io; they are described [below](#periodic-calendars-distances-and-bucket-loads).
+`PeriodicValues`, `MinimumDistance` and the bucket constraints are described in more detail [below](#periodic-calendars-distances-and-bucket-loads).
 
 `add_optional(constraint, presence)` wraps any constraint so that it only applies once the
 presence variable is fixed to `1`. Your own types implementing the `Constraint` trait are added
@@ -136,7 +135,7 @@ and the exceptions, so its size does not grow with the modelled horizon. Propaga
 disallowed values from domains of up to 4096 values and tightens only the bounds of larger ones.
 `build()` rejects a period that is not positive and an empty offset list.
 
-### Minimum distance (unreleased)
+### Minimum distance
 
 `add_minimum_distance(first, second, d)` adds a `MinimumDistance` constraint: the values of
 `first` and `second` differ by at least `d`, in either order. A `d` of `0` or less always holds.
@@ -145,7 +144,7 @@ between them, is decided by the model. As soon as one side is fixed, propagation
 values closer than `d` from the other side's domain. On a range domain it can only cut a prefix
 or a suffix; a forbidden band strictly inside the range is left to the search.
 
-### Bucket loads and block patterns (unreleased)
+### Bucket loads and block patterns
 
 Two constraints look at how much of a group of tasks falls into each *bucket*, such as each day
 of a week. A task is a `BucketedTask`: a start variable, an occupied length and a demand per time
