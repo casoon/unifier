@@ -1,0 +1,101 @@
+---
+import {
+  Badge,
+  Badges,
+  BuildOutput,
+  CodeBlock,
+  Facts,
+  Features,
+  Hero,
+  Install,
+  Quickstart,
+  Terminal,
+} from '@casoon/pages-theme/components';
+import Base from '@casoon/pages-theme/layouts/Base.astro';
+import { output } from '../showcase';
+
+const mainRs = `use unifier::dsl::ModelBuilder;
+use unifier::solver::{BranchAndBoundSolver, SolverOptions};
+
+let mut model = ModelBuilder::new();
+
+// Three meetings, each in one of the time slots 1 to 4.
+let a = model.new_var("a", 1..=4);
+let b = model.new_var("b", 1..=4);
+let c = model.new_var("c", 1..=4);
+
+// Hard constraints: no shared slot, and a ends before b starts.
+model.add_all_different([a, b, c]);
+model.add_less_than_or_equal(a, b, -1); // a <= b - 1
+
+// Soft objective: schedule everything as early as possible.
+model.add_minimize([a, b, c], 1);
+
+let graph = model.build().expect("valid model");
+let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default());
+println!("{:?}", outcome.status); // Optimal`;
+---
+
+<Base>
+  <Hero
+    title="Model constraint problems in Rust. Solve them anytime."
+    lead="unifier models constraint satisfaction and optimization problems – variables, domains, constraints, weighted objectives – and solves them with interchangeable strategies, from exhaustive search that proves optimality to local search and a parallel portfolio."
+  >
+    <Install commands={[{ label: 'cargo', command: 'cargo add unifier@0.1' }]} />
+    <Badges>
+      <Badge>MIT</Badge>
+      <Badge tone="brand">early</Badge>
+      <Badge>crates.io 0.1.1</Badge>
+      <Badge>Rust 1.87+</Badge>
+    </Badges>
+    <Terminal slot="output" title="cargo run --example job_shop" dots ansi={output('job_shop')} />
+  </Hero>
+
+  <Facts
+    items={[
+      { value: '5', label: 'interchangeable solver strategies' },
+      { value: '12', label: 'built-in constraints, three of them global' },
+      { value: '4', label: 'outcome states: Optimal, Feasible, Infeasible, Aborted' },
+      { value: '1', label: 'runtime dependency (pathwise)' },
+    ]}
+  />
+
+  <Features
+    items={[
+      {
+        title: 'Global constraints that propagate',
+        body: 'AllDifferent reaches generalized arc consistency with Régin’s matching algorithm; Cumulative and NoOverlap detect overload, and NoOverlap tightens bounds by edge-finding.',
+      },
+      {
+        title: 'Honest results',
+        body: 'Optimal only when Branch & Bound has proven it, Infeasible only when the search space is exhausted, Aborted with a reason otherwise – plus a score bound to show how far from proven a result is.',
+      },
+      {
+        title: 'Anytime and cancellable',
+        body: 'Time limits, node budgets and a cancellation token stop any solver with the best solution so far. The parallel portfolio shares that incumbent between its workers.',
+      },
+      {
+        title: 'Built for scheduling',
+        body: 'Activities, resources and groups compile into Cumulative and NoOverlap constraints, with calendars, optional activities, alternative resources and tardiness objectives.',
+      },
+    ]}
+  />
+
+  <BuildOutput
+    caption="Every result on this site is printed by an example program in the repository, captured with scripts/regenerate-showcase.sh. The showcase puts each program next to its output."
+    file="examples/output/map_coloring.txt"
+  >
+    <Terminal title="cargo run --example map_coloring" ansi={output('map_coloring')} />
+  </BuildOutput>
+
+  <Quickstart
+    lead="From a model to a proven optimum. The full walkthrough lives in the documentation."
+    steps={[
+      'Add the crate with <code>cargo add unifier@0.1</code>.',
+      'Declare variables, constraints and objectives with <code>ModelBuilder</code>.',
+      'Validate with <code>build()</code>, then pass the graph to a solver.',
+    ]}
+  >
+    <CodeBlock code={mainRs} lang="rust" title="main.rs" label="Rust" />
+  </Quickstart>
+</Base>

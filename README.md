@@ -6,6 +6,8 @@ framework for Rust, integrating with
 optimization traits (see "Solver stack" below for how far that
 integration currently goes).
 
+**Website and documentation:** [casoon.github.io/unifier](https://casoon.github.io/unifier/)
+
 ## Status
 
 Early (`0.1.x`), published to crates.io. The core model, constraint

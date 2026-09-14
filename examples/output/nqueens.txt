@@ -1,0 +1,11 @@
+8-Queens: 8 variables, 57 constraints
+Status: Feasible
+
+ . . . . Q . . .
+ Q . . . . . . .
+ . . . . . . . Q
+ . . . . . Q . .
+ . . Q . . . . .
+ . . . . . . Q .
+ . Q . . . . . .
+ . . . Q . . . .

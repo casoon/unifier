@@ -1,0 +1,55 @@
+---
+title: Installation
+description: unifier is a library crate. Add it to a Cargo project; there is no CLI.
+order: 1
+---
+
+```sh
+cargo add unifier@0.1
+```
+
+Or in `Cargo.toml`:
+
+```toml
+[dependencies]
+unifier = "0.1"
+```
+
+## Requirements
+
+| Requirement | Value |
+| --- | --- |
+| Rust | `1.87` or newer (`rust-version` in `Cargo.toml`) |
+| Edition | 2024 |
+| Runtime dependencies | [`pathwise`](https://github.com/casoon/pathwise) `0.1` |
+
+<Callout>
+  This documentation describes unifier 0.1.1, the version on the repository's default branch.
+</Callout>
+
+## Build from source
+
+The repository's `Cargo.toml` refers to `pathwise` through a relative path, so check out both
+repositories next to each other:
+
+```sh
+git clone https://github.com/casoon/pathwise
+git clone https://github.com/casoon/unifier
+cd unifier
+cargo test
+```
+
+## Run the examples
+
+The `examples/` directory contains the programs shown in the [showcase](../../../showcase/):
+
+```sh
+cargo run --example nqueens
+cargo run --example map_coloring
+cargo run --example job_shop
+cargo run --example scheduling_demo
+```
+
+## Next steps
+
+Continue with the [Quickstart](../quickstart/) to model and solve a first problem.

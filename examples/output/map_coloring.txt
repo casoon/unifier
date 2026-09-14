@@ -1,0 +1,13 @@
+Map of Australia: 7 regions, 9 borders
+
+3 colours: Feasible
+  WA   blue
+  NT   green
+  SA   red
+  Q    blue
+  NSW  green
+  V    blue
+  T    red
+
+2 colours: Infeasible
+  No colouring exists: WA, NT and SA border each other.
