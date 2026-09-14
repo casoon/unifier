@@ -89,6 +89,7 @@ impl Ord for HardSoftScore {
             .then_with(|| self.strong.cmp(&other.strong))
             .then_with(|| self.medium.cmp(&other.medium))
             .then_with(|| self.weak.cmp(&other.weak))
+            .then_with(|| self.soft.cmp(&other.soft))
     }
 }
 

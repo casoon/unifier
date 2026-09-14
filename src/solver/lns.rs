@@ -112,10 +112,9 @@ impl LnsSolver {
                 nodes_expanded: 0,
                 elapsed: start_time.elapsed(),
             };
-            return SolveOutcome::feasible(
-                best.unwrap_or(initial_solution(graph)),
-                statistics,
-                None,
+            return best.map_or_else(
+                || self.repair_solver.solve(graph, options),
+                |solution| SolveOutcome::feasible(solution, statistics, None),
             );
         }
         let n_destroy = ((vars.len() as f64) * self.destroy_fraction).max(1.0) as usize;
@@ -181,16 +180,6 @@ impl LnsSolver {
             |solution| SolveOutcome::feasible(solution, statistics, None),
         )
     }
-}
-
-fn initial_solution(graph: &ValidatedGraph) -> Solution {
-    let assignment = graph
-        .domains()
-        .iter()
-        .filter_map(|(&variable, domain)| domain.min().map(|value| (variable, value)))
-        .collect();
-    let score = ScoreCalculator.calculate_score(graph, &assignment);
-    Solution { assignment, score }
 }
 
 #[cfg(test)]
