@@ -16,9 +16,8 @@ fast, improve it, and stop whenever a time limit, node budget or cancellation sa
 
 - A constraint graph of variables, domains, constraints and objectives, validated before any
   solver sees it.
-- Thirteen built-in constraints in 0.3.1, including the global constraints `AllDifferent`,
-  `NoOverlap` and `Cumulative` with dedicated propagation, plus three more on the default branch
-  that are not released yet.
+- Sixteen built-in constraints in 0.3.2, including the global constraints `AllDifferent`,
+  `NoOverlap` and `Cumulative` with dedicated propagation.
 - Hard/soft scoring: hard constraints decide feasibility, weighted soft terms on three
   lexicographic levels rank feasible solutions.
 - Five solvers: Backtracking, Branch & Bound, Local Search, Large Neighbourhood Search and a
@@ -40,4 +39,4 @@ production planning.
 - **Guides**: [modelling](guides/modelling/), [solvers](guides/solvers/) and how unifier
   [relates to pathwise](guides/pathwise/).
 - **Reference**: an overview of the public modules. Item-level documentation lives on
-  [docs.rs](https://docs.rs/unifier/0.3.1/unifier/).
+  [docs.rs](https://docs.rs/unifier/0.3.2/unifier/).

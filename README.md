@@ -53,7 +53,7 @@ cancellable at any point.
 - **Constraint** — `Equal`, `NotEqual`, `LessThanOrEqual`,
   `AllDifferent`, `NoOverlap`, `Cumulative`, `Precedence`,
   `AllowedValues`/`ForbiddenValues`, `ExactlyOne`/`AtMost`/`AtLeast`,
-  `PeriodicValues`; on `master` but not yet released: `MinimumDistance`,
+  `PeriodicValues`, `MinimumDistance`,
   `MaximumBucketLoad`, `BucketBlockPattern`
 - **Objective** — `WeightedSum` soft-score terms (hard constraints are
   never violated in a feasible solution; soft terms are a weighted
