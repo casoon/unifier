@@ -1,6 +1,6 @@
 [package]
 name = "unifier"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Constraint satisfaction / optimization (CSP/COP) modeling and solver framework for Rust, built on pathwise"

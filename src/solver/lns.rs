@@ -12,6 +12,7 @@ use crate::model::variable::VariableId;
 use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
 use crate::solver::{SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort};
+use crate::{Assignment, ScoreCalculator};
 use std::time::Instant;
 
 /// Large Neighborhood Search solver.
@@ -49,17 +50,56 @@ impl LnsSolver {
     /// Time: O(I * d^K) where I is number of LNS iterations, K is number of destroyed variables.
     /// Space: O(N * d) graph snapshot depth.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
-        // Step 1: Obtain initial solution via Backtracking solver
         let initial_outcome = self.repair_solver.solve(graph, options);
-        let (mut current_assignment, current_score) = match initial_outcome.solution {
-            Some(Solution { assignment, score }) => (assignment, score),
+        let initial = match initial_outcome.solution {
+            Some(solution) => solution,
             None => return initial_outcome,
         };
+        self.improve_from(graph, initial, options)
+    }
 
-        let mut best_assignment = current_assignment.clone();
-        let mut best_score = current_score;
-        if let Some(incumbent) = &options.shared_incumbent {
-            incumbent.offer(&best_assignment, best_score);
+    /// Repairs from a caller-provided baseline assignment. The baseline is used as the LNS
+    /// neighborhood center even when changed constraints make it infeasible.
+    pub fn solve_from(
+        &self,
+        graph: &ValidatedGraph,
+        baseline: &Assignment,
+        options: &SolverOptions,
+    ) -> SolveOutcome {
+        let baseline_is_complete = graph.variables().keys().all(|variable| {
+            baseline
+                .get(variable)
+                .is_some_and(|value| graph.domains()[variable].contains(*value))
+        });
+        if !baseline_is_complete {
+            return self.solve(graph, options);
+        }
+        let score = ScoreCalculator.calculate_score(graph, baseline);
+        self.improve_from(
+            graph,
+            Solution {
+                assignment: baseline.clone(),
+                score,
+            },
+            options,
+        )
+    }
+
+    fn improve_from(
+        &self,
+        graph: &ValidatedGraph,
+        initial: Solution,
+        options: &SolverOptions,
+    ) -> SolveOutcome {
+        let mut current_assignment = initial.assignment;
+        let mut current_score = initial.score;
+        let mut best = current_score.is_feasible().then(|| Solution {
+            assignment: current_assignment.clone(),
+            score: current_score,
+        });
+
+        if let (Some(incumbent), Some(solution)) = (&options.shared_incumbent, &best) {
+            incumbent.offer(&solution.assignment, solution.score);
         }
 
         let start_time = Instant::now();
@@ -73,10 +113,7 @@ impl LnsSolver {
                 elapsed: start_time.elapsed(),
             };
             return SolveOutcome::feasible(
-                Solution {
-                    assignment: best_assignment,
-                    score: best_score,
-                },
+                best.unwrap_or(initial_solution(graph)),
                 statistics,
                 None,
             );
@@ -119,14 +156,18 @@ impl LnsSolver {
             };
 
             let repair_outcome = self.repair_solver.solve(&sub_graph, &repair_options);
-            if let Some(Solution { assignment, score }) = repair_outcome.solution
-                && score > best_score
-            {
-                best_score = score;
-                best_assignment = assignment.clone();
-                current_assignment = assignment;
-                if let Some(incumbent) = &options.shared_incumbent {
-                    incumbent.offer(&best_assignment, best_score);
+            if let Some(solution) = repair_outcome.solution {
+                if solution.score > current_score {
+                    current_score = solution.score;
+                    current_assignment = solution.assignment.clone();
+                }
+                if solution.score.is_feasible()
+                    && best.as_ref().is_none_or(|best| solution.score > best.score)
+                {
+                    if let Some(incumbent) = &options.shared_incumbent {
+                        incumbent.offer(&solution.assignment, solution.score);
+                    }
+                    best = Some(solution);
                 }
             }
         }
@@ -135,15 +176,21 @@ impl LnsSolver {
             nodes_expanded: lns_step,
             elapsed: start_time.elapsed(),
         };
-        SolveOutcome::feasible(
-            Solution {
-                assignment: best_assignment,
-                score: best_score,
-            },
-            statistics,
-            None,
+        best.map_or_else(
+            || self.repair_solver.solve(graph, options),
+            |solution| SolveOutcome::feasible(solution, statistics, None),
         )
     }
+}
+
+fn initial_solution(graph: &ValidatedGraph) -> Solution {
+    let assignment = graph
+        .domains()
+        .iter()
+        .filter_map(|(&variable, domain)| domain.min().map(|value| (variable, value)))
+        .collect();
+    let score = ScoreCalculator.calculate_score(graph, &assignment);
+    Solution { assignment, score }
 }
 
 #[cfg(test)]

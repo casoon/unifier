@@ -14,6 +14,15 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Debug;
+use std::sync::Arc;
+
+/// Lexicographic soft-score level. Higher levels always outrank every lower level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScoreLevel {
+    Strong,
+    Medium,
+    Weak,
+}
 
 /// Hard and Soft score evaluation for CSP/COP solutions.
 ///
@@ -22,6 +31,10 @@ use std::fmt::Debug;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct HardSoftScore {
     pub hard: i64,
+    pub strong: i64,
+    pub medium: i64,
+    pub weak: i64,
+    /// Sum of all soft levels, retained for compatibility and reporting.
     pub soft: i64,
 }
 
@@ -30,17 +43,34 @@ impl HardSoftScore {
     ///
     /// Time & Space: O(1).
     pub fn new(hard: i64, soft: i64) -> Self {
-        Self { hard, soft }
+        Self {
+            hard,
+            strong: 0,
+            medium: 0,
+            weak: soft,
+            soft,
+        }
+    }
+
+    /// Creates a fully tiered score.
+    pub fn tiered(hard: i64, strong: i64, medium: i64, weak: i64) -> Self {
+        Self {
+            hard,
+            strong,
+            medium,
+            weak,
+            soft: strong.saturating_add(medium).saturating_add(weak),
+        }
     }
 
     /// Returns a feasible score with hard = 0 and given soft score.
     pub fn feasible(soft: i64) -> Self {
-        Self { hard: 0, soft }
+        Self::new(0, soft)
     }
 
     /// Returns an infeasible score with given hard violation penalty.
     pub fn infeasible(hard: i64) -> Self {
-        Self { hard, soft: 0 }
+        Self::new(hard, 0)
     }
 
     /// Returns `true` if all hard constraints are satisfied (`hard >= 0`).
@@ -54,10 +84,11 @@ impl HardSoftScore {
 
 impl Ord for HardSoftScore {
     fn cmp(&self, other: &Self) -> Ordering {
-        match self.hard.cmp(&other.hard) {
-            Ordering::Equal => self.soft.cmp(&other.soft),
-            ord => ord,
-        }
+        self.hard
+            .cmp(&other.hard)
+            .then_with(|| self.strong.cmp(&other.strong))
+            .then_with(|| self.medium.cmp(&other.medium))
+            .then_with(|| self.weak.cmp(&other.weak))
     }
 }
 
@@ -70,9 +101,17 @@ impl PartialOrd for HardSoftScore {
 impl fmt::Display for HardSoftScore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_feasible() {
-            write!(f, "Feasible({})", self.soft)
+            write!(
+                f,
+                "Feasible(strong={}, medium={}, weak={})",
+                self.strong, self.medium, self.weak
+            )
         } else {
-            write!(f, "Infeasible(hard={}, soft={})", self.hard, self.soft)
+            write!(
+                f,
+                "Infeasible(hard={}, strong={}, medium={}, weak={})",
+                self.hard, self.strong, self.medium, self.weak
+            )
         }
     }
 }
@@ -89,6 +128,16 @@ impl fmt::Display for HardSoftScore {
 pub trait Objective: Debug + Send + Sync {
     /// Returns a human-readable name of the objective.
     fn name(&self) -> &str;
+
+    /// Stable category used for score drill-down.
+    fn category(&self) -> &str {
+        self.name()
+    }
+
+    /// Lexicographic level used to order this soft contribution.
+    fn level(&self) -> ScoreLevel {
+        ScoreLevel::Weak
+    }
 
     /// Returns the slice of variable IDs this objective depends on.
     ///
@@ -107,6 +156,50 @@ pub trait Objective: Debug + Send + Sync {
     /// improve on the best solution found so far. Must satisfy: for every completion of the
     /// current domains, `evaluate(completion) <= optimistic_bound(domains)`.
     fn optimistic_bound(&self, domains: &HashMap<VariableId, Domain>) -> i64;
+}
+
+/// Adds a stable category and score level to an arbitrary objective.
+#[derive(Debug, Clone)]
+pub struct CategorizedObjective {
+    category: String,
+    level: ScoreLevel,
+    inner: Arc<dyn Objective>,
+}
+
+impl CategorizedObjective {
+    pub fn new(category: impl Into<String>, level: ScoreLevel, inner: Arc<dyn Objective>) -> Self {
+        Self {
+            category: category.into(),
+            level,
+            inner,
+        }
+    }
+}
+
+impl Objective for CategorizedObjective {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    fn category(&self) -> &str {
+        &self.category
+    }
+
+    fn level(&self) -> ScoreLevel {
+        self.level
+    }
+
+    fn scope(&self) -> &[VariableId] {
+        self.inner.scope()
+    }
+
+    fn evaluate(&self, assignment: &HashMap<VariableId, i64>) -> i64 {
+        self.inner.evaluate(assignment)
+    }
+
+    fn optimistic_bound(&self, domains: &HashMap<VariableId, Domain>) -> i64 {
+        self.inner.optimistic_bound(domains)
+    }
 }
 
 /// Objective enforcing a weighted linear sum of variables: `weight * sum(vars)`.
@@ -190,13 +283,10 @@ impl ScoreCalculator {
             }
         }
 
-        let soft_score: i64 = graph
-            .objectives()
-            .iter()
-            .map(|o| o.evaluate(assignment))
-            .sum();
+        let (strong, medium, weak) =
+            objective_totals(graph, |objective| objective.evaluate(assignment));
 
-        HardSoftScore::new(hard_violations, soft_score)
+        HardSoftScore::tiered(hard_violations, strong, medium, weak)
     }
 
     /// Computes an optimistic (upper-bound) score reachable from a partial `assignment` given the
@@ -229,12 +319,9 @@ impl ScoreCalculator {
                 }
             })
             .sum();
-        let soft_bound: i64 = graph
-            .objectives()
-            .iter()
-            .map(|o| o.optimistic_bound(domains))
-            .sum();
-        HardSoftScore::new(hard, soft_bound)
+        let (strong, medium, weak) =
+            objective_totals(graph, |objective| objective.optimistic_bound(domains));
+        HardSoftScore::tiered(hard, strong, medium, weak)
     }
 
     /// Incrementally updates a score when `changed_var` is modified, re-evaluating only affected
@@ -266,19 +353,57 @@ impl ScoreCalculator {
             }
         }
 
-        let mut soft_delta: i64 = 0;
+        let mut strong_delta: i64 = 0;
+        let mut medium_delta: i64 = 0;
+        let mut weak_delta: i64 = 0;
         for objective in graph.objectives() {
             if objective.scope().contains(&changed_var) {
                 let delta = objective
                     .evaluate(new_assignment)
                     .saturating_sub(objective.evaluate(old_assignment));
-                soft_delta = soft_delta.saturating_add(delta);
+                match objective.level() {
+                    ScoreLevel::Strong => strong_delta = strong_delta.saturating_add(delta),
+                    ScoreLevel::Medium => medium_delta = medium_delta.saturating_add(delta),
+                    ScoreLevel::Weak => weak_delta = weak_delta.saturating_add(delta),
+                }
             }
         }
 
-        HardSoftScore::new(
+        HardSoftScore::tiered(
             current_score.hard.saturating_add(hard_delta),
-            current_score.soft.saturating_add(soft_delta),
+            current_score.strong.saturating_add(strong_delta),
+            current_score.medium.saturating_add(medium_delta),
+            current_score.weak.saturating_add(weak_delta),
         )
+    }
+}
+
+fn objective_totals(
+    graph: &ConstraintGraph,
+    value: impl Fn(&Arc<dyn Objective>) -> i64,
+) -> (i64, i64, i64) {
+    let mut strong = 0i64;
+    let mut medium = 0i64;
+    let mut weak = 0i64;
+    for objective in graph.objectives() {
+        let contribution = value(objective);
+        match objective.level() {
+            ScoreLevel::Strong => strong = strong.saturating_add(contribution),
+            ScoreLevel::Medium => medium = medium.saturating_add(contribution),
+            ScoreLevel::Weak => weak = weak.saturating_add(contribution),
+        }
+    }
+    (strong, medium, weak)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lexicographic_levels_do_not_trade_strong_for_lower_scores() {
+        let strong = HardSoftScore::tiered(0, 0, -1_000, -1_000);
+        let lower = HardSoftScore::tiered(0, -1, 1_000_000, 1_000_000);
+        assert!(strong > lower);
     }
 }
