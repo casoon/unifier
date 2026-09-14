@@ -24,6 +24,12 @@ let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default(
 `LocalSearchSolver` and `LnsSolver` also implement `Default`. `LnsSolver` clamps the destroy
 fraction to the range 0.1 to 0.9.
 
+`LnsSolver::solve_from(&graph, &baseline, &options)` starts from an existing assignment instead
+of a fresh backtracking solution, for example an earlier plan after a constraint has changed.
+The baseline is the centre of the neighbourhoods even when it is no longer feasible; only
+feasible solutions are returned. If the baseline leaves a variable unassigned or holds a value
+outside its domain, `solve_from` behaves like `solve`.
+
 `ParallelSolver` runs Backtracking, Local Search, LNS and Branch & Bound at the same time. They
 share a best-so-far solution (the shared incumbent), so a fast incomplete worker hands Branch &
 Bound a strong bound to prune against. The result is the best solution any worker found, not the

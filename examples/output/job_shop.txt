@@ -1,11 +1,11 @@
 Job shop: 3 jobs, 3 machines, horizon 21
 Status: Optimal
-Score: Feasible(-11)
+Score: Feasible(strong=0, medium=0, weak=-11)
 Makespan: 11
 
        01234567890
-  M0   11000......
-  M1   2222.001111
-  M2   ..1.22200..
+  M0   00011......
+  M1   2222001111.
+  M2   .....122200
 
 Digits are job numbers; each row is one machine.

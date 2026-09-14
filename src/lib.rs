@@ -22,8 +22,9 @@ pub mod score;
 pub mod solver;
 
 pub use constraint::{
-    AllDifferent, AllowedValues, Assignment, AtLeast, AtMost, Constraint, Cumulative, Equal,
-    ExactlyOne, Explanation, ForbiddenValues, LessThanOrEqual, NoOverlap, NotEqual, Precedence,
+    AllDifferent, AllowedValues, Assignment, AtLeast, AtMost, BucketRange, BucketedTask,
+    Constraint, Cumulative, Equal, ExactlyOne, Explanation, ForbiddenValues, LessThanOrEqual,
+    MaximumBucketLoad, MinimumDistance, NoOverlap, NotEqual, PeriodicValues, Precedence,
     TaskDemand,
 };
 pub use dsl::ModelBuilder;
@@ -33,7 +34,9 @@ pub use model::{
 pub use propagation::{
     ConstraintGraph, ConstraintViolation, ModelError, PropagationEngine, ValidatedGraph,
 };
-pub use score::{HardSoftScore, Objective, ScoreCalculator, WeightedSum};
+pub use score::{
+    CategorizedObjective, HardSoftScore, Objective, ScoreCalculator, ScoreLevel, WeightedSum,
+};
 pub use solver::{
     AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,
     LocalSearchSolver, ParallelSolver, SearchStatistics, Solution, SolveOutcome, SolveStatus,

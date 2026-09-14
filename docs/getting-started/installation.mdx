@@ -5,14 +5,14 @@ order: 1
 ---
 
 ```sh
-cargo add unifier@0.1
+cargo add unifier
 ```
 
 Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-unifier = "0.1"
+unifier = "0.3"
 ```
 
 ## Requirements
@@ -21,21 +21,25 @@ unifier = "0.1"
 | --- | --- |
 | Rust | `1.87` or newer (`rust-version` in `Cargo.toml`) |
 | Edition | 2024 |
-| Runtime dependencies | [`pathwise`](https://github.com/casoon/pathwise) `0.1` |
+| Runtime dependencies | [`pathwise`](https://crates.io/crates/pathwise) `0.2` |
 
 <Callout>
-  This documentation describes unifier 0.1.1, the version on the repository's default branch.
+  This documentation describes the repository's default branch. The latest release on crates.io
+  is 0.3.1; the constraints marked *unreleased* in the [modelling guide](../../guides/modelling/)
+  are not part of it yet.
 </Callout>
 
 ## Build from source
 
-The repository's `Cargo.toml` refers to `pathwise` through a relative path, so check out both
-repositories next to each other:
+The repository's `Cargo.toml` names `pathwise` with a version and a relative path
+(`version = "0.2.0", path = "../pathwise"`), so local development can use a pathwise checkout
+next to unifier. That checkout has to provide pathwise 0.2. Without one, remove the `path` part
+of the dependency and Cargo uses the published pathwise from crates.io, as the CI workflow does:
 
 ```sh
-git clone https://github.com/casoon/pathwise
 git clone https://github.com/casoon/unifier
 cd unifier
+sed -i.bak 's|, path = "../pathwise"||' Cargo.toml
 cargo test
 ```
 
