@@ -172,7 +172,12 @@ impl ParallelSolver {
             elapsed: start_time.elapsed(),
         };
 
-        match shared_incumbent.best() {
+        // An infeasible assignment is not a solution: it must never leave here as `Feasible`,
+        // however a worker came to offer it.
+        match shared_incumbent
+            .best()
+            .filter(|(_, score)| score.is_feasible())
+        {
             Some((assignment, score)) => {
                 let solution = Solution { assignment, score };
                 if proven_optimal {

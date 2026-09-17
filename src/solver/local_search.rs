@@ -161,7 +161,13 @@ impl LocalSearchSolver {
                 if current_score > best_score {
                     best_score = current_score;
                     best_assignment = current_assignment.clone();
-                    if let Some(incumbent) = &options.shared_incumbent {
+                    // Only *feasible* solutions belong in the portfolio (as in `LnsSolver`):
+                    // this solver's starting assignment violates hard constraints in all but
+                    // the smallest models, and a portfolio that adopts one reports it as its
+                    // solution.
+                    if best_score.is_feasible()
+                        && let Some(incumbent) = &options.shared_incumbent
+                    {
                         incumbent.offer(&best_assignment, best_score);
                     }
                 }

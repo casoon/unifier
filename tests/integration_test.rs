@@ -669,3 +669,36 @@ fn test_model_builder_build_surfaces_validation_errors() {
         "build() should reject a model referencing an unregistered variable"
     );
 }
+
+/// Regression: the portfolio must not report an **infeasible** assignment as a solution.
+///
+/// Pigeonhole — three variables, two values, all different — is unsatisfiable. `LocalSearch`
+/// starts from a complete (and therefore conflicting) assignment and improves it; if it offers
+/// those improvements to the shared incumbent, `ParallelSolver` reads one back at the end and
+/// returns it as `Feasible`. A caller then stores a plan that violates hard constraints without
+/// ever being told.
+#[test]
+fn portfolio_never_returns_an_infeasible_assignment() {
+    let mut builder = ModelBuilder::new();
+    let vars: Vec<VariableId> = (0..3)
+        .map(|index| builder.new_var(format!("x{index}"), 1..=2))
+        .collect();
+    builder.add_all_different(vars.clone());
+    builder.add_maximize(vars.clone(), 1);
+    let graph = builder.build().expect("graph");
+
+    let outcome = ParallelSolver::new().solve(
+        &graph,
+        &SolverOptions {
+            time_limit: Some(Duration::from_millis(500)),
+            ..SolverOptions::default()
+        },
+    );
+
+    assert!(
+        outcome.solution.is_none(),
+        "unsatisfiable model returned a solution: {:?}",
+        outcome.solution.map(|solution| solution.assignment),
+    );
+    assert_ne!(outcome.status, SolveStatus::Feasible);
+}

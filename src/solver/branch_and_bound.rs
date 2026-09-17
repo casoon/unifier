@@ -168,6 +168,7 @@ impl BranchAndBoundSolver {
         // adopted.
         if let Some(incumbent) = &options.shared_incumbent
             && let Some((shared_assignment, shared_score)) = incumbent.best()
+            && shared_score.is_feasible()
             && state.best_score.is_none_or(|b| shared_score > b)
         {
             *state.best_score = Some(shared_score);
