@@ -11,11 +11,11 @@ use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
-use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
+use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
 use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
-    select_mrv_variable,
+    order_values_by_neighbor_domain_size, select_dom_wdeg_variable,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -33,6 +33,9 @@ struct SearchState<'a> {
     nodes_count: &'a mut u64,
     best_solution: &'a mut Option<HashMap<VariableId, i64>>,
     best_score: &'a mut Option<HardSoftScore>,
+    /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
+    /// [`select_dom_wdeg_variable`]). Updated by [`PropagationEngine::propagate`].
+    weights: &'a mut HashMap<ConstraintId, u32>,
 }
 
 impl BranchAndBoundSolver {
@@ -60,20 +63,23 @@ impl BranchAndBoundSolver {
     /// `Optimal`.
     ///
     /// # Complexity
-    /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`])
-    /// and MRV variable ordering.
+    /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`]),
+    /// `dom/wdeg` variable ordering and least-constraining-value ordering (see
+    /// [`select_dom_wdeg_variable`], [`order_values_by_neighbor_domain_size`]).
     /// Space: O(n * d) recursion stack depth.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = TrailedDomains::new(graph.domains().clone());
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
+        let mut weights = HashMap::new();
 
         let mut best_solution = None;
         let mut best_score = None;
 
         if let PropagationResult::Conflict =
-            self.propagator.propagate(graph, &mut current_domains, None)
+            self.propagator
+                .propagate(graph, &mut current_domains, Some(&mut weights))
         {
             return SolveOutcome::infeasible(SearchStatistics {
                 nodes_expanded: 0,
@@ -95,6 +101,7 @@ impl BranchAndBoundSolver {
                 nodes_count: &mut nodes_count,
                 best_solution: &mut best_solution,
                 best_score: &mut best_score,
+                weights: &mut weights,
             },
         );
         let statistics = SearchStatistics {
@@ -186,13 +193,19 @@ impl BranchAndBoundSolver {
             }
         }
 
-        let var_id = match select_mrv_variable(graph, domains, assignment) {
+        let var_id = match select_dom_wdeg_variable(graph, domains, assignment, state.weights) {
             Some(v) => v,
             None => return true,
         };
 
         let candidate_values = match domains.get(&var_id) {
-            Some(d) => d.values(),
+            Some(d) => order_values_by_neighbor_domain_size(
+                graph,
+                domains,
+                assignment,
+                var_id,
+                d.values(),
+            ),
             None => return true,
         };
 
@@ -206,7 +219,7 @@ impl BranchAndBoundSolver {
             }
 
             if let PropagationResult::Success { .. } =
-                self.propagator.propagate(graph, domains, None)
+                self.propagator.propagate(graph, domains, Some(state.weights))
             {
                 exhaustive &= self.search(graph, domains, assignment, options, start_time, state);
             }

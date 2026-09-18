@@ -195,36 +195,6 @@ pub(crate) fn check_abort(
     None
 }
 
-/// Minimum Remaining Values (MRV / Fail-First) heuristic selecting the unassigned variable
-/// with the smallest domain.
-///
-/// Shared by exact tree-search solvers (Backtracking, Branch & Bound).
-///
-/// # Complexity
-/// Time: O(N) where N is number of variables. Space: O(1).
-pub(crate) fn select_mrv_variable(
-    graph: &ConstraintGraph,
-    domains: &HashMap<VariableId, Domain>,
-    assignment: &HashMap<VariableId, i64>,
-) -> Option<VariableId> {
-    let mut best_var = None;
-    let mut min_domain_size = usize::MAX;
-
-    for &var_id in graph.variables().keys() {
-        if !assignment.contains_key(&var_id)
-            && let Some(domain) = domains.get(&var_id)
-        {
-            let len = domain.len();
-            if len < min_domain_size {
-                min_domain_size = len;
-                best_var = Some(var_id);
-            }
-        }
-    }
-
-    best_var
-}
-
 /// `dom/wdeg` variable-ordering heuristic: among unassigned variables, picks the one minimizing
 /// `domain_size / weighted_degree`, where `weighted_degree` is the sum of `weights` (initialized
 /// to 1, incremented by [`crate::propagation::engine::PropagationEngine::propagate`] each time a
@@ -233,12 +203,17 @@ pub(crate) fn select_mrv_variable(
 /// the heuristic increasingly favors branching on the variables most involved in past failures —
 /// "fail-first" driven by learned conflict history rather than domain size alone.
 ///
-/// Currently used only by [`crate::solver::BacktrackingSolver`] (see
-/// `plan/11-search-heuristics-and-global-constraints.md`, part A).
+/// Shared by exact tree-search solvers ([`crate::solver::BacktrackingSolver`],
+/// [`crate::solver::BranchAndBoundSolver`]).
+///
+/// Ties (equal ratio) resolve to the lowest [`VariableId`], not iteration order: `graph`
+/// stores variables in a `HashMap`, whose iteration order is randomized per process, so
+/// breaking ties by insertion/iteration order would make search behavior — and therefore any
+/// benchmark — unreproducible from one run to the next despite identical input and options.
 ///
 /// # Complexity
-/// Time: O(N * D) where N is number of variables and D is the max constraint degree per
-/// variable. Space: O(1) beyond the caller-owned `weights` map.
+/// Time: O(N log N + N * D) where N is number of variables (the sort) and D is the max
+/// constraint degree per variable. Space: O(N) for the sorted id list.
 ///
 /// # References
 /// Boussemart, F., Hemery, F., Lecoutre, C., & Sais, L. (2004). *Boosting systematic search by
@@ -252,7 +227,10 @@ pub(crate) fn select_dom_wdeg_variable(
     let mut best_var = None;
     let mut best_ratio = f64::INFINITY;
 
-    for &var_id in graph.variables().keys() {
+    let mut var_ids: Vec<VariableId> = graph.variables().keys().copied().collect();
+    var_ids.sort_unstable();
+
+    for var_id in var_ids {
         if assignment.contains_key(&var_id) {
             continue;
         }
@@ -281,4 +259,52 @@ pub(crate) fn select_dom_wdeg_variable(
     }
 
     best_var
+}
+
+/// Least-constraining-value heuristic: orders `values` so that the value shared by the fewest
+/// still-unassigned neighbors' domains comes first.
+///
+/// A neighbor is any other variable connected to `var_id` through at least one constraint,
+/// counted once per connecting constraint (variables joined by several constraints weigh more,
+/// mirroring how [`select_dom_wdeg_variable`] sums weight across constraints rather than
+/// counting neighbors once). This is a cheap, domain-neutral proxy for "leaves the most room
+/// for neighbors": it reads current domains rather than evaluating each constraint's semantics
+/// per candidate value, which a full least-constraining-value pass would require (one trial
+/// propagation per value).
+///
+/// # Complexity
+/// Time: O(|values| * degree) where degree is the number of constraint-connected neighbor
+/// occurrences. Space: O(|values|).
+///
+/// # References
+/// Haralick, R. M., & Elliott, G. L. (1980). *Increasing tree search efficiency for constraint
+/// satisfaction problems*. Artificial Intelligence, 14(3), 263-313.
+pub(crate) fn order_values_by_neighbor_domain_size(
+    graph: &ConstraintGraph,
+    domains: &HashMap<VariableId, Domain>,
+    assignment: &HashMap<VariableId, i64>,
+    var_id: VariableId,
+    values: Vec<i64>,
+) -> Vec<i64> {
+    let neighbors: Vec<VariableId> = graph
+        .constraints_for_variable(var_id)
+        .iter()
+        .filter_map(|&cid| graph.get_constraint(cid))
+        .flat_map(|constraint| constraint.scope().iter().copied())
+        .filter(|&v| v != var_id && !assignment.contains_key(&v))
+        .collect();
+
+    let mut scored: Vec<(i64, usize)> = values
+        .into_iter()
+        .map(|val| {
+            let shared = neighbors
+                .iter()
+                .filter(|&&n| domains.get(&n).is_some_and(|d| d.contains(val)))
+                .count();
+            (val, shared)
+        })
+        .collect();
+
+    scored.sort_by_key(|&(_, shared)| shared);
+    scored.into_iter().map(|(val, _)| val).collect()
 }
