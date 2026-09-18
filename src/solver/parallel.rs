@@ -61,7 +61,14 @@ impl ParallelSolver {
         // Coordinates worker shutdown internally; the caller's own token (if any) is observed
         // below but never mutated, so it stays reusable for the caller's other operations.
         let internal_token = CancellationToken::new();
-        let shared_incumbent = SharedIncumbent::new();
+        // A caller who already holds a solution passes it in through `options.shared_incumbent`,
+        // and the portfolio then starts bounded by it instead of from nothing — the same head
+        // start the workers give each other, only from outside. Improvements flow back into that
+        // handle, so the caller sees them too.
+        let shared_incumbent = options
+            .shared_incumbent
+            .clone()
+            .unwrap_or_else(SharedIncumbent::new);
 
         let mut thread_options = options.clone();
         thread_options.cancellation_token = Some(internal_token.clone());
