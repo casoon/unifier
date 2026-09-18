@@ -377,6 +377,71 @@ impl ScoreCalculator {
             current_score.weak.saturating_add(weak_delta),
         )
     }
+
+    /// Scores the assignment that would result from setting `changed_var` to `new_value`, without
+    /// building it: `assignment` is mutated in place and restored before returning.
+    ///
+    /// Same result as [`Self::update_incremental_score`] applied to a cloned neighbour, but a
+    /// local search scanning a variable's whole domain clones the entire assignment once per
+    /// candidate value that way. Here nothing is allocated at all.
+    ///
+    /// # Complexity
+    /// Time: O(K + O) where K is the number of constraints attached to `changed_var` and O the
+    /// number of objective terms. Space: O(1).
+    pub(crate) fn score_after_change(
+        &self,
+        graph: &ConstraintGraph,
+        assignment: &mut HashMap<VariableId, i64>,
+        changed_var: VariableId,
+        new_value: i64,
+        current_score: HardSoftScore,
+    ) -> HardSoftScore {
+        let Some(&old_value) = assignment.get(&changed_var) else {
+            return current_score;
+        };
+
+        let violations = |assignment: &HashMap<VariableId, i64>| -> i64 {
+            graph
+                .constraints_for_variable(changed_var)
+                .iter()
+                .filter_map(|&cid| graph.get_constraint(cid))
+                .filter(|constraint| !constraint.is_satisfied(assignment))
+                .count() as i64
+        };
+        let totals = |assignment: &HashMap<VariableId, i64>| {
+            objective_totals(graph, |objective| {
+                if objective.scope().contains(&changed_var) {
+                    objective.evaluate(assignment)
+                } else {
+                    0
+                }
+            })
+        };
+
+        let old_violations = violations(assignment);
+        let (old_strong, old_medium, old_weak) = totals(assignment);
+
+        assignment.insert(changed_var, new_value);
+        let new_violations = violations(assignment);
+        let (new_strong, new_medium, new_weak) = totals(assignment);
+        assignment.insert(changed_var, old_value);
+
+        // `hard` counts -1 per violated constraint, so resolving one raises the score.
+        HardSoftScore::tiered(
+            current_score
+                .hard
+                .saturating_add(old_violations.saturating_sub(new_violations)),
+            current_score
+                .strong
+                .saturating_add(new_strong.saturating_sub(old_strong)),
+            current_score
+                .medium
+                .saturating_add(new_medium.saturating_sub(old_medium)),
+            current_score
+                .weak
+                .saturating_add(new_weak.saturating_sub(old_weak)),
+        )
+    }
 }
 
 fn objective_totals(

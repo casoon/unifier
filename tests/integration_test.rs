@@ -403,6 +403,7 @@ fn test_parallel_solver_does_not_claim_infeasible_when_starved() {
         time_limit: None,
         max_nodes: Some(0),
         cancellation_token: None,
+        seed: 42,
         shared_incumbent: None,
     };
     let outcome = ParallelSolver::new().solve(&graph, &options);
@@ -420,6 +421,7 @@ fn test_backtracking_aborts_on_node_limit() {
         time_limit: None,
         max_nodes: Some(0),
         cancellation_token: None,
+        seed: 42,
         shared_incumbent: None,
     };
     let outcome = BacktrackingSolver::new().solve(&graph, &options);
@@ -540,6 +542,7 @@ fn test_branch_and_bound_not_proven_optimal_when_node_starved() {
         time_limit: None,
         max_nodes: Some(3),
         cancellation_token: None,
+        seed: 42,
         shared_incumbent: None,
     };
     let outcome = BranchAndBoundSolver::new().solve(&graph, &options);

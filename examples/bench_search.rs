@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use unifier::constraint::{NotEqual, TaskDemand};
 use unifier::dsl::ModelBuilder;
 use unifier::solver::{
-    BacktrackingSolver, BranchAndBoundSolver, ParallelSolver, SearchStatistics, SolveOutcome,
-    SolverOptions,
+    BacktrackingSolver, BranchAndBoundSolver, LocalSearchSolver, ParallelSolver, SearchStatistics,
+    SolveOutcome, SolverOptions,
 };
 use unifier::{Interval, ValidatedGraph, VariableId};
 
@@ -185,9 +185,50 @@ fn exactly_one_and_at_least(n: i64, domain_max: i64) -> ValidatedGraph {
     builder.build().expect("valid model")
 }
 
+/// Graph colouring with a planted solution: colouring node `i` with `i % colors` is an
+/// arrangement the instance admits by construction, because an edge is only ever drawn between
+/// two nodes that arrangement colours differently. So the instance is always satisfiable, and a
+/// run that finds nothing failed at searching rather than at being asked the impossible.
+///
+/// Neighbours come from a deterministic pseudo-random walk over the indices rather than from a
+/// ring, which is the point: with ring neighbours a single greedy pass in index order simply
+/// walks into a valid colouring and no repair ever happens. Scattered edges leave conflicts for
+/// the repair loop to work on, and that loop's throughput is what `run_local_search` reports —
+/// `nodes` counts repair steps, so `nodes/sec` reads as moves per second.
+fn graph_coloring(n: i64, colors: i64, degree: usize) -> ValidatedGraph {
+    let mut builder = ModelBuilder::new();
+    let vars: Vec<VariableId> = (0..n)
+        .map(|i| builder.new_var(format!("n{i}"), 1..=colors))
+        .collect();
+    for i in 0..n {
+        let mut state = (i as u64).wrapping_mul(6364136223846793005);
+        for _ in 0..degree {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let neighbor = ((state >> 11) % n as u64) as i64;
+            if i % colors == neighbor % colors {
+                continue;
+            }
+            builder.add_constraint(Arc::new(NotEqual::with_offset(
+                vars[i as usize],
+                vars[neighbor as usize],
+                0,
+            )));
+        }
+    }
+    builder.build().expect("valid model")
+}
+
 fn run_backtracking(name: &str, graph: &ValidatedGraph, options: &SolverOptions) {
     report(name, graph, options, |g, o| {
         BacktrackingSolver::new().solve(g, o)
+    });
+}
+
+fn run_local_search(name: &str, graph: &ValidatedGraph, options: &SolverOptions) {
+    report(name, graph, options, |g, o| {
+        LocalSearchSolver::default().solve(g, o)
     });
 }
 
@@ -312,4 +353,21 @@ fn main() {
         &job_shop_scheduling(4, 4),
         &options,
     );
+
+    // Local Search on growing graph colouring: `nodes` are repair steps, so `nodes/sec` is moves
+    // per second and `elapsed` is the time to the first feasible assignment (the solver stops
+    // there on a pure CSP). A short limit on purpose — a repair loop that has not solved a
+    // 3-colourable ring in five seconds is not going to.
+    println!();
+    let local_search_options = SolverOptions {
+        time_limit: Some(Duration::from_secs(5)),
+        ..SolverOptions::default()
+    };
+    for n in [30, 60, 120, 240] {
+        run_local_search(
+            &format!("graph_coloring({n}) LocalSearch"),
+            &graph_coloring(n, 3, 6),
+            &local_search_options,
+        );
+    }
 }

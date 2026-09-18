@@ -151,6 +151,7 @@ impl LnsSolver {
                     .map(|t| t.saturating_sub(start_time.elapsed())),
                 max_nodes: Some(500),
                 cancellation_token: options.cancellation_token.clone(),
+                seed: options.seed,
                 shared_incumbent: options.shared_incumbent.clone(),
             };
 

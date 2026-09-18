@@ -34,6 +34,12 @@ pub struct SolverOptions {
     pub max_nodes: Option<u64>,
     /// Optional thread-safe cancellation handle.
     pub cancellation_token: Option<CancellationToken>,
+    /// Seed for the randomized tie-breaking in [`LocalSearchSolver`].
+    ///
+    /// Fixed by default, so two runs over the same model with the same options take the same
+    /// path — without that, neither a benchmark nor a bug report is reproducible. Vary it to
+    /// sample different paths through the same landscape.
+    pub seed: u64,
     /// Optional portfolio-wide shared incumbent (see [`SharedIncumbent`]). When present,
     /// [`BranchAndBoundSolver`] additionally bounds its search against it (and contributes its
     /// own improvements back), and [`LocalSearchSolver`]/[`LnsSolver`] contribute improving
@@ -48,6 +54,7 @@ impl Default for SolverOptions {
             time_limit: Some(Duration::from_secs(10)),
             max_nodes: None,
             cancellation_token: None,
+            seed: 42,
             shared_incumbent: None,
         }
     }
