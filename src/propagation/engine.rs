@@ -64,19 +64,59 @@ impl PropagationEngine {
         &self,
         graph: &ConstraintGraph,
         domains: &mut TrailedDomains,
+        weights: Option<&mut HashMap<ConstraintId, u32>>,
+    ) -> PropagationResult {
+        self.propagate_from(
+            graph,
+            domains,
+            (0..graph.constraints().len()).map(|i| ConstraintId(i as u32)),
+            weights,
+        )
+    }
+
+    /// Propagates from `seeds` only, instead of from every constraint in the graph.
+    ///
+    /// For a caller that knows what changed — a search node that just assigned one variable
+    /// seeds that variable's constraints. The rest of the graph is already at a fixpoint and
+    /// re-running it finds nothing: the parent node left the domains arc-consistent, and
+    /// [`TrailedDomains::undo_to`] restores exactly that state on the way back up, so the
+    /// invariant holds for every node of the descent. Only what hangs off the changed variable
+    /// can break, and the event-based re-enqueueing below carries that outwards as far as it
+    /// actually reaches.
+    ///
+    /// The difference is a large constant factor on real models: seeded with the whole graph, a
+    /// search node costs one [`crate::constraint::Constraint::propagate`] call per constraint in
+    /// the *model*, however small the change that node made.
+    ///
+    /// # Complexity
+    /// Time: O(E + S + R * D) where E is the constraint count (the membership flags), S the seed
+    /// count and R the constraints actually reached — against O(E * D) for [`Self::propagate`],
+    /// which reaches all of them by construction.
+    /// Space: O(E) for the queue's membership flags.
+    pub fn propagate_from(
+        &self,
+        graph: &ConstraintGraph,
+        domains: &mut TrailedDomains,
+        seeds: impl IntoIterator<Item = ConstraintId>,
         mut weights: Option<&mut HashMap<ConstraintId, u32>>,
     ) -> PropagationResult {
-        let mut queue: VecDeque<ConstraintId> = (0..graph.constraints().len())
-            .map(|i| ConstraintId(i as u32))
-            .collect();
-
-        let mut in_queue: HashMap<ConstraintId, bool> =
-            queue.iter().map(|&cid| (cid, true)).collect();
+        // Indexed, not hashed: `ConstraintId` is a dense index into `constraints()`, so hashing
+        // one per enqueue is pure overhead on the hottest path the solvers have.
+        let mut in_queue = vec![false; graph.constraints().len()];
+        let mut queue: VecDeque<ConstraintId> = VecDeque::new();
+        for cid in seeds {
+            if let Some(queued) = in_queue.get_mut(cid.0 as usize)
+                && !*queued
+            {
+                *queued = true;
+                queue.push_back(cid);
+            }
+        }
 
         let mut global_changed = false;
 
         while let Some(cid) = queue.pop_front() {
-            in_queue.insert(cid, false);
+            in_queue[cid.0 as usize] = false;
 
             if let Some(constraint) = graph.get_constraint(cid) {
                 let trail_checkpoint = domains.checkpoint();
@@ -95,10 +135,9 @@ impl PropagationEngine {
                             // actually touched (per the trail), not the constraint's whole scope.
                             for var_id in domains.changed_since(trail_checkpoint) {
                                 for &dep_cid in graph.constraints_for_variable(var_id) {
-                                    if dep_cid != cid && !*in_queue.get(&dep_cid).unwrap_or(&false)
-                                    {
+                                    if dep_cid != cid && !in_queue[dep_cid.0 as usize] {
                                         queue.push_back(dep_cid);
-                                        in_queue.insert(dep_cid, true);
+                                        in_queue[dep_cid.0 as usize] = true;
                                     }
                                 }
                             }

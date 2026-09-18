@@ -205,11 +205,14 @@ impl BacktrackingSolver {
                 d.assign(val);
             }
 
-            // Propagate constraints
-            if let PropagationResult::Success { .. } =
-                self.propagator
-                    .propagate(graph, domains, Some(state.weights))
-                && self.backtrack(graph, domains, assignment, options, start_time, state)
+            // Propagate from what this node changed: the parent's domains are already a
+            // fixpoint, so only this variable's constraints can have anything left to say.
+            if let PropagationResult::Success { .. } = self.propagator.propagate_from(
+                graph,
+                domains,
+                graph.constraints_for_variable(var_id).iter().copied(),
+                Some(state.weights),
+            ) && self.backtrack(graph, domains, assignment, options, start_time, state)
             {
                 return true;
             }
