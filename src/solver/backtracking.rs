@@ -185,13 +185,9 @@ impl BacktrackingSolver {
         };
 
         let candidate_values = match domains.get(&var_id) {
-            Some(d) => order_values_by_neighbor_domain_size(
-                graph,
-                domains,
-                assignment,
-                var_id,
-                d.values(),
-            ),
+            Some(d) => {
+                order_values_by_neighbor_domain_size(graph, domains, assignment, var_id, d.values())
+            }
             None => return false,
         };
 

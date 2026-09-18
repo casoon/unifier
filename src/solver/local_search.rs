@@ -416,9 +416,13 @@ impl LocalSearchSolver {
             if candidate == current_value {
                 continue;
             }
-            let score =
-                self.score_calculator
-                    .score_after_change(graph, assignment, var_id, candidate, current_score);
+            let score = self.score_calculator.score_after_change(
+                graph,
+                assignment,
+                var_id,
+                candidate,
+                current_score,
+            );
             // Aspiration criterion: a tabu move is allowed when it beats the overall best.
             if tabu_list.contains(&(var_id, candidate)) && score <= best_score {
                 continue;

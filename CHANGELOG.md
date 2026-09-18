@@ -10,6 +10,48 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+A search release. The solvers were strong at proving optimality on small models and weak at
+finding any solution on large ones; this evens that out.
+
+### Changed
+
+- **Breaking:** `SolverOptions` has a new `seed` field, so a struct literal listing every field
+  no longer compiles. `..SolverOptions::default()` is unaffected.
+- **Breaking:** `ParallelSolver` adopts an incumbent the caller set in
+  `SolverOptions::shared_incumbent` instead of discarding it and starting empty. A caller that
+  already holds a solution can hand it over, and improvements flow back into that handle.
+- `BranchAndBoundSolver` orders variables by `dom/wdeg` instead of plain MRV, threading through
+  its recursion the same constraint weights `BacktrackingSolver` already used, and tries values
+  least-constraining first. Both solvers share that value ordering.
+- Ties in the variable ordering resolve to the lowest `VariableId` rather than to `HashMap`
+  iteration order, which Rust randomizes per process. Before this, five runs over one unchanged
+  model split three ways solved and twice never finished, purely by hash seed — no run was
+  reproducible, so no measurement of this solver meant anything.
+- `LocalSearchSolver` repairs conflicts instead of rescanning the model: while hard constraints
+  are violated it draws a violated constraint and moves one of its variables, scores candidates
+  in place rather than cloning the assignment per candidate, and starts from AC-3 plus a greedy
+  pass instead of every variable's domain minimum. On graph colouring, throughput at 240
+  variables went from 5.6k to 315k moves per second and stopped falling as the model grows.
+- `BacktrackingSolver` restarts on a Luby schedule, carrying its `dom/wdeg` weights across
+  restarts. A run cut short by a restart budget is tracked apart from one that exhausted the
+  search space, so only the latter still reports `Infeasible`.
+- A search node propagates from the constraints of the variable it just assigned rather than
+  from every constraint in the graph. Node counts across the benchmark corpus are unchanged to
+  the digit — the same tree, reached about six times faster on a large model.
+
+### Added
+
+- `PropagationEngine::propagate_from`, taking the seed constraints. `propagate` is now the
+  special case that seeds everything, which is still what a root-level call wants.
+- `SolverOptions::seed` for the randomized tie-breaking in `LocalSearchSolver`, fixed by default
+  so a run replays exactly.
+
+### Removed
+
+- `select_mrv_variable` (crate-internal), which lost its last caller.
+
 ## [0.3.2] - 2026-09-14
 
 ### Added
