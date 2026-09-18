@@ -14,7 +14,8 @@ use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::ScoreCalculator;
 use crate::solver::{
-    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort, select_dom_wdeg_variable,
+    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+    order_values_by_neighbor_domain_size, select_dom_wdeg_variable,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -48,11 +49,13 @@ impl BacktrackingSolver {
     ///
     /// Variable ordering uses the `dom/wdeg` heuristic (see `select_dom_wdeg_variable`):
     /// constraints that cause conflicts accumulate weight, so branching increasingly favors
-    /// variables most involved in past failures.
+    /// variables most involved in past failures. Values are tried least-constraining first (see
+    /// [`order_values_by_neighbor_domain_size`]), which matters most here: this solver stops at
+    /// the *first* feasible assignment, so how fast it descends to one is the whole cost.
     ///
     /// # Complexity
-    /// Time: O(d^n) worst-case search tree size, mitigated by `dom/wdeg` variable ordering and
-    /// AC-3 domain pruning.
+    /// Time: O(d^n) worst-case search tree size, mitigated by `dom/wdeg` variable ordering,
+    /// least-constraining-value ordering and AC-3 domain pruning.
     /// Space: O(n * d) recursion stack depth and domain snapshot storage.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = TrailedDomains::new(graph.domains().clone());
@@ -126,7 +129,13 @@ impl BacktrackingSolver {
         };
 
         let candidate_values = match domains.get(&var_id) {
-            Some(d) => d.values(),
+            Some(d) => order_values_by_neighbor_domain_size(
+                graph,
+                domains,
+                assignment,
+                var_id,
+                d.values(),
+            ),
             None => return false,
         };
 
