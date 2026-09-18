@@ -65,10 +65,10 @@ impl ParallelSolver {
         // and the portfolio then starts bounded by it instead of from nothing — the same head
         // start the workers give each other, only from outside. Improvements flow back into that
         // handle, so the caller sees them too.
-        let shared_incumbent = options
-            .shared_incumbent
-            .clone()
-            .unwrap_or_else(SharedIncumbent::new);
+        let shared_incumbent = match options.shared_incumbent.clone() {
+            Some(from_caller) => from_caller,
+            None => SharedIncumbent::new(),
+        };
 
         let mut thread_options = options.clone();
         thread_options.cancellation_token = Some(internal_token.clone());

@@ -27,6 +27,35 @@ pub struct BacktrackingSolver {
     score_calculator: ScoreCalculator,
 }
 
+/// Nodes in the shortest restart. The Luby sequence multiplies this, so the first attempts are
+/// cheap probes and later ones are long enough to finish a search that simply needs depth.
+const RESTART_UNIT_NODES: u64 = 512;
+
+/// The Luby sequence 1, 1, 2, 1, 1, 2, 4, 1, … — restart lengths that are optimal to within a
+/// constant factor when nothing is known in advance about how long a run needs.
+///
+/// # References
+/// Luby, M., Sinclair, A., & Zuckerman, D. (1993). *Optimal speedup of Las Vegas algorithms*.
+/// Information Processing Letters, 47(4), 173-180.
+fn luby(attempt: u32) -> u64 {
+    // Term i (1-based) is 2^(k-1) when i = 2^k - 1; otherwise the sequence repeats from its
+    // start, so drop the completed prefix and look the shorter index up again.
+    let mut index = u64::from(attempt) + 1;
+    let mut k = 1u32;
+    loop {
+        let span = (1u64 << k) - 1;
+        if index == span {
+            return 1u64 << (k - 1);
+        }
+        if index < span {
+            index -= (1u64 << (k - 1)) - 1;
+            k = 1;
+            continue;
+        }
+        k += 1;
+    }
+}
+
 /// Mutable bookkeeping threaded through the recursive [`BacktrackingSolver::backtrack`] descent,
 /// bundled to keep the recursive call's argument count manageable.
 struct SearchState<'a> {
@@ -34,6 +63,13 @@ struct SearchState<'a> {
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
     /// [`select_dom_wdeg_variable`]). Updated by [`PropagationEngine::propagate`].
     weights: &'a mut HashMap<ConstraintId, u32>,
+    /// Node count at which the current attempt gives up so a restart can re-dive under the
+    /// weights it just learned.
+    restart_at: u64,
+    /// Set when `restart_at` actually stopped the descent. The distinction matters: a search
+    /// that was cut short has proven nothing, while one that ran out of tree has proven the
+    /// problem unsatisfiable.
+    restarted: &'a mut bool,
 }
 
 impl BacktrackingSolver {
@@ -58,47 +94,61 @@ impl BacktrackingSolver {
     /// least-constraining-value ordering and AC-3 domain pruning.
     /// Space: O(n * d) recursion stack depth and domain snapshot storage.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
-        let mut current_domains = TrailedDomains::new(graph.domains().clone());
-        let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
         let mut weights = HashMap::new();
 
-        // Initial AC-3 propagation over full graph
-        if let PropagationResult::Conflict =
-            self.propagator
-                .propagate(graph, &mut current_domains, Some(&mut weights))
-        {
-            return SolveOutcome::infeasible(SearchStatistics {
-                nodes_expanded: 0,
+        for attempt in 0.. {
+            let mut current_domains = TrailedDomains::new(graph.domains().clone());
+            let mut assignment = HashMap::new();
+
+            // Initial AC-3 propagation over full graph
+            if let PropagationResult::Conflict =
+                self.propagator
+                    .propagate(graph, &mut current_domains, Some(&mut weights))
+            {
+                return SolveOutcome::infeasible(SearchStatistics {
+                    nodes_expanded: nodes_count,
+                    elapsed: start_time.elapsed(),
+                });
+            }
+
+            let mut restarted = false;
+            let found = self.backtrack(
+                graph,
+                &mut current_domains,
+                &mut assignment,
+                options,
+                start_time,
+                &mut SearchState {
+                    restart_at: nodes_count
+                        .saturating_add(luby(attempt).saturating_mul(RESTART_UNIT_NODES)),
+                    nodes_count: &mut nodes_count,
+                    weights: &mut weights,
+                    restarted: &mut restarted,
+                },
+            );
+            let statistics = SearchStatistics {
+                nodes_expanded: nodes_count,
                 elapsed: start_time.elapsed(),
-            });
-        }
+            };
 
-        let found = self.backtrack(
-            graph,
-            &mut current_domains,
-            &mut assignment,
-            options,
-            start_time,
-            &mut SearchState {
-                nodes_count: &mut nodes_count,
-                weights: &mut weights,
-            },
-        );
-        let statistics = SearchStatistics {
-            nodes_expanded: nodes_count,
-            elapsed: start_time.elapsed(),
-        };
-
-        if found {
-            let score = self.score_calculator.calculate_score(graph, &assignment);
-            SolveOutcome::feasible(Solution { assignment, score }, statistics, None)
-        } else if let Some(reason) = check_abort(options, start_time, nodes_count) {
-            SolveOutcome::aborted(reason, statistics)
-        } else {
-            SolveOutcome::infeasible(statistics)
+            if found {
+                let score = self.score_calculator.calculate_score(graph, &assignment);
+                return SolveOutcome::feasible(Solution { assignment, score }, statistics, None);
+            }
+            if let Some(reason) = check_abort(options, start_time, nodes_count) {
+                return SolveOutcome::aborted(reason, statistics);
+            }
+            if !restarted {
+                // The tree ran out rather than the budget, so there is nothing left to find.
+                return SolveOutcome::infeasible(statistics);
+            }
+            // Otherwise: re-dive, carrying the constraint weights this attempt just learned.
+            // They are the whole point — without them the next descent would walk the same path
+            // into the same dead end.
         }
+        unreachable!("the restart loop only ends by returning")
     }
 
     fn backtrack(
@@ -111,6 +161,12 @@ impl BacktrackingSolver {
         state: &mut SearchState,
     ) -> bool {
         if check_abort(options, start_time, *state.nodes_count).is_some() {
+            return false;
+        }
+        if *state.nodes_count >= state.restart_at {
+            // Give up on this descent so the caller can re-dive under the weights learned here.
+            // Flagged rather than silent: unwinding on a budget says nothing about the problem.
+            *state.restarted = true;
             return false;
         }
 
