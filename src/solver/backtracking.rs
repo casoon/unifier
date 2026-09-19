@@ -14,8 +14,8 @@ use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::ScoreCalculator;
 use crate::solver::{
-    SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
-    order_values_by_neighbor_domain_size, select_dom_wdeg_variable,
+    SearchFrame, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+    order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -56,8 +56,8 @@ fn luby(attempt: u32) -> u64 {
     }
 }
 
-/// Mutable bookkeeping threaded through the recursive [`BacktrackingSolver::backtrack`] descent,
-/// bundled to keep the recursive call's argument count manageable.
+/// Mutable bookkeeping threaded through a [`BacktrackingSolver::backtrack`] descent, bundled to
+/// keep the call's argument count manageable.
 struct SearchState<'a> {
     nodes_count: &'a mut u64,
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
@@ -92,7 +92,8 @@ impl BacktrackingSolver {
     /// # Complexity
     /// Time: O(d^n) worst-case search tree size, mitigated by `dom/wdeg` variable ordering,
     /// least-constraining-value ordering and AC-3 domain pruning.
-    /// Space: O(n * d) recursion stack depth and domain snapshot storage.
+    /// Space: O(n * d) for the search stack and the domain trail; both live on the heap, so
+    /// depth is bounded by memory rather than by the thread's stack size.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
@@ -151,6 +152,13 @@ impl BacktrackingSolver {
         unreachable!("the restart loop only ends by returning")
     }
 
+    /// Explores assignments depth-first on an explicit stack of [`SearchFrame`]s, returning
+    /// `true` as soon as a complete feasible assignment is found.
+    ///
+    /// The stack is explicit because the depth of this descent is the number of variables; see
+    /// [`SearchFrame`] for why the call stack is the wrong place for it. On `true` `assignment`
+    /// holds the solution; on `false` both `assignment` and `domains` are restored to how they
+    /// were found, whether the tree ran out or the budget did.
     fn backtrack(
         &self,
         graph: &ConstraintGraph,
@@ -160,46 +168,67 @@ impl BacktrackingSolver {
         start_time: Instant,
         state: &mut SearchState,
     ) -> bool {
-        if check_abort(options, start_time, *state.nodes_count).is_some() {
-            return false;
-        }
-        if *state.nodes_count >= state.restart_at {
-            // Give up on this descent so the caller can re-dive under the weights learned here.
-            // Flagged rather than silent: unwinding on a budget says nothing about the problem.
-            *state.restarted = true;
-            return false;
-        }
+        let mut stack: Vec<SearchFrame> = Vec::new();
+        // Whether the next turn of the loop enters a fresh node or resumes the deepest frame.
+        let mut descending = true;
 
-        *state.nodes_count += 1;
+        loop {
+            if descending {
+                descending = false;
 
-        // If all variables are assigned, verify satisfaction
-        if assignment.len() == graph.variables().len() {
-            let score = self.score_calculator.calculate_score(graph, assignment);
-            return score.is_feasible();
-        }
+                if check_abort(options, start_time, *state.nodes_count).is_some() {
+                    unwind(stack.iter_mut().rev(), domains, assignment);
+                    return false;
+                }
+                if *state.nodes_count >= state.restart_at {
+                    // Give up on this descent so the caller can re-dive under the weights learned
+                    // here. Flagged rather than silent: unwinding on a budget says nothing about
+                    // the problem.
+                    *state.restarted = true;
+                    unwind(stack.iter_mut().rev(), domains, assignment);
+                    return false;
+                }
 
-        // Select next variable via dom/wdeg heuristic
-        let var_id = match select_dom_wdeg_variable(graph, domains, assignment, state.weights) {
-            Some(v) => v,
-            None => return assignment.len() == graph.variables().len(),
-        };
+                *state.nodes_count += 1;
 
-        let candidate_values = match domains.get(&var_id) {
-            Some(d) => {
-                order_values_by_neighbor_domain_size(graph, domains, assignment, var_id, d.values())
+                if assignment.len() == graph.variables().len() {
+                    // Every variable is assigned: this leaf either satisfies the hard constraints
+                    // or it is a dead end like any other.
+                    if self
+                        .score_calculator
+                        .calculate_score(graph, assignment)
+                        .is_feasible()
+                    {
+                        return true;
+                    }
+                } else if let Some(var_id) =
+                    select_dom_wdeg_variable(graph, domains, assignment, state.weights)
+                    && let Some(domain) = domains.get(&var_id)
+                {
+                    let values = order_values_by_neighbor_domain_size(
+                        graph,
+                        domains,
+                        assignment,
+                        var_id,
+                        domain.values(),
+                    );
+                    stack.push(SearchFrame::new(var_id, values));
+                }
+                // A node that neither succeeded nor branched is a dead end: fall through and let
+                // the frame below try its next value.
             }
-            None => return false,
-        };
 
-        for val in candidate_values {
-            // Checkpoint the domain trail prior to assignment (O(1), no full clone).
-            let checkpoint = domains.checkpoint();
-
-            // Assign value
-            assignment.insert(var_id, val);
-            if let Some(d) = domains.get_mut(&var_id) {
-                d.assign(val);
-            }
+            // Resume the deepest frame: undo the attempt that just failed, then try the next
+            // value. A frame with nothing left is popped, which resumes its own parent.
+            let Some(frame) = stack.last_mut() else {
+                // The stack ran out rather than the budget: the tree is exhausted.
+                return false;
+            };
+            frame.undo_attempt(domains, assignment);
+            let Some(var_id) = frame.assign_next(domains, assignment) else {
+                stack.pop();
+                continue;
+            };
 
             // Propagate from what this node changed: the parent's domains are already a
             // fixpoint, so only this variable's constraints can have anything left to say.
@@ -208,17 +237,11 @@ impl BacktrackingSolver {
                 domains,
                 graph.constraints_for_variable(var_id).iter().copied(),
                 Some(state.weights),
-            ) && self.backtrack(graph, domains, assignment, options, start_time, state)
-            {
-                return true;
+            ) {
+                descending = true;
             }
-
-            // Backtrack: restore state (only the domains actually touched since checkpoint).
-            assignment.remove(&var_id);
-            domains.undo_to(checkpoint);
+            // A conflict means this value is dead; the next turn undoes it and tries another.
         }
-
-        false
     }
 }
 

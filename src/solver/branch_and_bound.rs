@@ -14,8 +14,8 @@ use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
 use crate::solver::{
-    AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
-    order_values_by_neighbor_domain_size, select_dom_wdeg_variable,
+    AbortReason, SearchFrame, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+    order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -27,8 +27,8 @@ pub struct BranchAndBoundSolver {
     score_calculator: ScoreCalculator,
 }
 
-/// Mutable bookkeeping threaded through the recursive [`BranchAndBoundSolver::search`] descent,
-/// bundled to keep the recursive call's argument count manageable.
+/// Mutable bookkeeping threaded through a [`BranchAndBoundSolver::search`] descent, bundled to
+/// keep the call's argument count manageable.
 struct SearchState<'a> {
     nodes_count: &'a mut u64,
     best_solution: &'a mut Option<HashMap<VariableId, i64>>,
@@ -66,7 +66,8 @@ impl BranchAndBoundSolver {
     /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`]),
     /// `dom/wdeg` variable ordering and least-constraining-value ordering (see
     /// [`select_dom_wdeg_variable`], [`order_values_by_neighbor_domain_size`]).
-    /// Space: O(n * d) recursion stack depth.
+    /// Space: O(n * d) for the search stack and the domain trail; both live on the heap, so
+    /// depth is bounded by memory rather than by the thread's stack size.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let mut current_domains = TrailedDomains::new(graph.domains().clone());
         let mut assignment = HashMap::new();
@@ -128,12 +129,17 @@ impl BranchAndBoundSolver {
         }
     }
 
-    /// Recursively explores assignments of unassigned variables, applying bound-based pruning.
+    /// Explores assignments of unassigned variables depth-first, applying bound-based pruning.
     ///
-    /// Returns `true` if this subtree was resolved exhaustively — either by full enumeration, by
-    /// a propagation conflict, or by proving via [`ScoreCalculator::optimistic_score`] that no
-    /// completion of this branch can beat `state.best_score` — and `false` if it was cut short by
-    /// [`check_abort`]. A pruned branch still counts as resolved: the bound is a proof, not a guess.
+    /// Returns `true` if the whole tree below the starting point was resolved exhaustively —
+    /// either by full enumeration, by a propagation conflict, or by proving via
+    /// [`ScoreCalculator::optimistic_score`] that no completion can beat `state.best_score` — and
+    /// `false` if it was cut short by [`check_abort`]. A pruned branch still counts as resolved:
+    /// the bound is a proof, not a guess.
+    ///
+    /// The descent runs on an explicit stack of [`SearchFrame`]s rather than on the call stack;
+    /// see there for why. Each frame carries its own `exhaustive` flag, which is what the
+    /// recursive form accumulated in a local across the value loop.
     fn search(
         &self,
         graph: &ConstraintGraph,
@@ -143,76 +149,99 @@ impl BranchAndBoundSolver {
         start_time: Instant,
         state: &mut SearchState,
     ) -> bool {
-        if check_abort(options, start_time, *state.nodes_count).is_some() {
-            return false;
-        }
+        let mut stack: Vec<BoundFrame> = Vec::new();
+        // Whether the next turn of the loop enters a fresh node or resumes the deepest frame.
+        let mut descending = true;
+        // Whether the node that just finished resolved its subtree exhaustively. Folded into the
+        // frame below when that frame resumes — the equivalent of the recursive `exhaustive &=`.
+        let mut resolved = true;
 
-        *state.nodes_count += 1;
+        loop {
+            if descending {
+                descending = false;
+                resolved = true;
 
-        if assignment.len() == graph.variables().len() {
-            let score = self.score_calculator.calculate_score(graph, assignment);
-            if score.is_feasible() {
-                let is_better = match state.best_score {
-                    Some(b_score) => score > *b_score,
-                    None => true,
-                };
-                if is_better {
-                    *state.best_score = Some(score);
-                    *state.best_solution = Some(assignment.clone());
-                    if let Some(incumbent) = &options.shared_incumbent {
-                        incumbent.offer(assignment, score);
+                if check_abort(options, start_time, *state.nodes_count).is_some() {
+                    unwind(
+                        stack.iter_mut().rev().map(|frame| &mut frame.node),
+                        domains,
+                        assignment,
+                    );
+                    return false;
+                }
+
+                *state.nodes_count += 1;
+
+                if assignment.len() == graph.variables().len() {
+                    let score = self.score_calculator.calculate_score(graph, assignment);
+                    if score.is_feasible() {
+                        let is_better = match state.best_score {
+                            Some(b_score) => score > *b_score,
+                            None => true,
+                        };
+                        if is_better {
+                            *state.best_score = Some(score);
+                            *state.best_solution = Some(assignment.clone());
+                            if let Some(incumbent) = &options.shared_incumbent {
+                                incumbent.offer(assignment, score);
+                            }
+                        }
+                    }
+                } else {
+                    // Adopt a better portfolio-wide incumbent (see `SharedIncumbent`) before
+                    // bounding: some other worker (e.g. Local Search, LNS) may have found a
+                    // stronger solution than this subtree knows about yet. `best_solution` must be
+                    // updated alongside `best_score` so the pair stays consistent — `solve()`'s
+                    // final match on `(best_solution, best_score)` would otherwise report
+                    // `Infeasible` despite a solution existing, if only the score were adopted.
+                    if let Some(incumbent) = &options.shared_incumbent
+                        && let Some((shared_assignment, shared_score)) = incumbent.best()
+                        && shared_score.is_feasible()
+                        && state.best_score.is_none_or(|b| shared_score > b)
+                    {
+                        *state.best_score = Some(shared_score);
+                        *state.best_solution = Some(shared_assignment);
+                    }
+
+                    // Bound-based pruning: if no completion of this branch can beat the best score
+                    // found so far, the branch is resolved without exploring it further.
+                    let pruned = state.best_score.is_some_and(|best| {
+                        self.score_calculator
+                            .optimistic_score(graph, domains, assignment)
+                            <= best
+                    });
+
+                    if !pruned
+                        && let Some(var_id) =
+                            select_dom_wdeg_variable(graph, domains, assignment, state.weights)
+                        && let Some(domain) = domains.get(&var_id)
+                    {
+                        let values = order_values_by_neighbor_domain_size(
+                            graph,
+                            domains,
+                            assignment,
+                            var_id,
+                            domain.values(),
+                        );
+                        stack.push(BoundFrame::new(var_id, values));
                     }
                 }
+                // Anything that did not branch resolved itself here, with `resolved` still true.
             }
-            return true;
-        }
 
-        // Adopt a better portfolio-wide incumbent (see `SharedIncumbent`) before bounding: some
-        // other worker (e.g. Local Search, LNS) may have found a stronger solution than this
-        // subtree knows about yet. `best_solution` must be updated alongside `best_score` so the
-        // pair stays consistent — `solve()`'s final match on `(best_solution, best_score)` would
-        // otherwise report `Infeasible` despite a solution existing, if only the score were
-        // adopted.
-        if let Some(incumbent) = &options.shared_incumbent
-            && let Some((shared_assignment, shared_score)) = incumbent.best()
-            && shared_score.is_feasible()
-            && state.best_score.is_none_or(|b| shared_score > b)
-        {
-            *state.best_score = Some(shared_score);
-            *state.best_solution = Some(shared_assignment);
-        }
-
-        // Bound-based pruning: if no completion of this branch can beat the best score found so
-        // far, the branch is resolved without exploring it further.
-        if let Some(best) = state.best_score {
-            let bound = self
-                .score_calculator
-                .optimistic_score(graph, domains, assignment);
-            if bound <= *best {
-                return true;
-            }
-        }
-
-        let var_id = match select_dom_wdeg_variable(graph, domains, assignment, state.weights) {
-            Some(v) => v,
-            None => return true,
-        };
-
-        let candidate_values = match domains.get(&var_id) {
-            Some(d) => {
-                order_values_by_neighbor_domain_size(graph, domains, assignment, var_id, d.values())
-            }
-            None => return true,
-        };
-
-        let mut exhaustive = true;
-        for val in candidate_values {
-            let checkpoint = domains.checkpoint();
-
-            assignment.insert(var_id, val);
-            if let Some(d) = domains.get_mut(&var_id) {
-                d.assign(val);
-            }
+            // Resume the deepest frame: fold in what the subtree below it reported, undo the
+            // attempt that produced it, then try the next value. A frame with nothing left is
+            // popped and reports its own verdict to the frame below.
+            let Some(frame) = stack.last_mut() else {
+                return resolved;
+            };
+            frame.exhaustive &= resolved;
+            frame.node.undo_attempt(domains, assignment);
+            let Some(var_id) = frame.node.assign_next(domains, assignment) else {
+                resolved = frame.exhaustive;
+                stack.pop();
+                continue;
+            };
 
             // Propagate from what this node changed: the parent's domains are already a
             // fixpoint, so only this variable's constraints can have anything left to say.
@@ -222,14 +251,29 @@ impl BranchAndBoundSolver {
                 graph.constraints_for_variable(var_id).iter().copied(),
                 Some(state.weights),
             ) {
-                exhaustive &= self.search(graph, domains, assignment, options, start_time, state);
+                descending = true;
+            } else {
+                // A conflict resolves this value without exploring it — the next turn undoes it.
+                resolved = true;
             }
-
-            assignment.remove(&var_id);
-            domains.undo_to(checkpoint);
         }
+    }
+}
 
-        exhaustive
+/// A [`SearchFrame`] plus the verdict Branch and Bound accumulates over a node's values: whether
+/// every branch below it was resolved, rather than cut short by the budget. Only a node whose
+/// subtree is fully resolved may contribute to an optimality claim.
+struct BoundFrame {
+    node: SearchFrame,
+    exhaustive: bool,
+}
+
+impl BoundFrame {
+    fn new(variable: VariableId, values: Vec<i64>) -> Self {
+        Self {
+            node: SearchFrame::new(variable, values),
+            exhaustive: true,
+        }
     }
 }
 

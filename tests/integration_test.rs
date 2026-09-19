@@ -705,3 +705,85 @@ fn portfolio_never_returns_an_infeasible_assignment() {
     );
     assert_ne!(outcome.status, SolveStatus::Feasible);
 }
+
+/// The depth of a depth-first assignment search is the number of variables, so where the search
+/// keeps its frames decides the largest instance the library can handle at all. On the call
+/// stack, a large enough model overflows — and a stack overflow is not a `SolveOutcome` a caller
+/// can react to, it aborts the process.
+///
+/// Both searches therefore descend on an explicit, heap-allocated stack. These two tests pin
+/// that down by running a chain of variables on a thread whose stack leaves 64 bytes per
+/// variable — less than any call frame. A recursive descent crashes the whole test binary
+/// here rather than failing an assertion — deliberately, because that is exactly the failure
+/// being guarded against.
+fn chain_graph(length: usize) -> ValidatedGraph {
+    let mut builder = ModelBuilder::new();
+    let vars: Vec<VariableId> = (0..length)
+        .map(|index| builder.new_var(format!("x{index}"), 0..=2))
+        .collect();
+    for pair in vars.windows(2) {
+        builder.add_constraint(Arc::new(NotEqual::new(pair[0], pair[1])));
+    }
+    builder.build().expect("graph")
+}
+
+/// Long enough that one call frame per variable cannot fit in [`SMALL_STACK`], short enough
+/// that a chain this trivial is solved in milliseconds — the guard is about depth, not speed.
+const CHAIN_LENGTH: usize = 1000;
+
+/// 64 bytes per variable of the chain. No call frame of a search routine is that small.
+const SMALL_STACK: usize = 64 * 1024;
+
+/// Runs `body` on a thread whose stack is far too small to hold one frame per variable.
+fn on_a_small_stack<T: Send + 'static>(body: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(SMALL_STACK)
+        .spawn(body)
+        .expect("worker thread")
+        .join()
+        .expect("the search must not overflow the stack")
+}
+
+#[test]
+fn backtracking_search_depth_does_not_live_on_the_call_stack() {
+    let outcome = on_a_small_stack(|| {
+        let graph = chain_graph(CHAIN_LENGTH);
+        BacktrackingSolver::new().solve(&graph, &SolverOptions::default())
+    });
+
+    assert_eq!(outcome.status, SolveStatus::Feasible);
+    assert_eq!(
+        outcome.solution.expect("solution").assignment.len(),
+        CHAIN_LENGTH
+    );
+}
+
+#[test]
+fn branch_and_bound_search_depth_does_not_live_on_the_call_stack() {
+    let outcome = on_a_small_stack(|| {
+        let mut builder = ModelBuilder::new();
+        let vars: Vec<VariableId> = (0..CHAIN_LENGTH)
+            .map(|index| builder.new_var(format!("x{index}"), 0..=2))
+            .collect();
+        for pair in vars.windows(2) {
+            builder.add_constraint(Arc::new(NotEqual::new(pair[0], pair[1])));
+        }
+        // A soft objective is what sends Timbra-sized models through Branch & Bound at all.
+        builder.add_maximize(vars, 1);
+        let graph = builder.build().expect("graph");
+        // Bounded by nodes, not by time: the first descent reaches the deepest point this test
+        // is about, and everything after it is optimization the guard has no opinion on. A node
+        // budget also keeps the run identical on a slow machine.
+        BranchAndBoundSolver::new().solve(
+            &graph,
+            &SolverOptions {
+                max_nodes: Some(CHAIN_LENGTH as u64 * 4),
+                ..SolverOptions::default()
+            },
+        )
+    });
+
+    let solution = outcome.solution.expect("a first descent must complete");
+    assert_eq!(solution.assignment.len(), CHAIN_LENGTH);
+    assert!(solution.score.is_feasible());
+}

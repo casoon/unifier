@@ -18,7 +18,7 @@ pub use local_search::LocalSearchSolver;
 pub use parallel::ParallelSolver;
 pub use shared_incumbent::SharedIncumbent;
 
-use crate::model::domain::Domain;
+use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId};
 use crate::score::HardSoftScore;
@@ -314,4 +314,79 @@ pub(crate) fn order_values_by_neighbor_domain_size(
 
     scored.sort_by_key(|&(_, shared)| shared);
     scored.into_iter().map(|(val, _)| val).collect()
+}
+
+/// One level of an explicit depth-first search stack: the variable branched on here, the values
+/// still untried, and the trail position to undo to when the value in flight fails.
+///
+/// The searches keep their descent on a stack of these rather than on the call stack, because
+/// the depth of an assignment search *is* the number of variables. A recursive descent therefore
+/// overflows once an instance is large enough — and a stack overflow aborts the process, so the
+/// caller gets no result at all where it should have got "no solution within the budget".
+pub(crate) struct SearchFrame {
+    variable: VariableId,
+    values: Vec<i64>,
+    next: usize,
+    /// Trail position recorded before the value currently being tried; `None` while this frame
+    /// has no value assigned — before its first attempt, and after each one is undone.
+    checkpoint: Option<usize>,
+}
+
+impl SearchFrame {
+    pub(crate) fn new(variable: VariableId, values: Vec<i64>) -> Self {
+        Self {
+            variable,
+            values,
+            next: 0,
+            checkpoint: None,
+        }
+    }
+
+    /// Undoes the value currently in flight, if there is one, leaving the frame ready for its
+    /// next value. Only the domains touched since the checkpoint are restored.
+    pub(crate) fn undo_attempt(
+        &mut self,
+        domains: &mut TrailedDomains,
+        assignment: &mut HashMap<VariableId, i64>,
+    ) {
+        if let Some(checkpoint) = self.checkpoint.take() {
+            assignment.remove(&self.variable);
+            domains.undo_to(checkpoint);
+        }
+    }
+
+    /// Takes the next untried value and assigns it, returning the variable it was assigned to.
+    /// `None` once the frame has tried everything — the caller then pops it and resumes the
+    /// frame below.
+    pub(crate) fn assign_next(
+        &mut self,
+        domains: &mut TrailedDomains,
+        assignment: &mut HashMap<VariableId, i64>,
+    ) -> Option<VariableId> {
+        let value = *self.values.get(self.next)?;
+        self.next += 1;
+        // Taken before the assignment, so undoing returns to the parent's fixpoint.
+        self.checkpoint = Some(domains.checkpoint());
+        assignment.insert(self.variable, value);
+        if let Some(domain) = domains.get_mut(&self.variable) {
+            domain.assign(value);
+        }
+        Some(self.variable)
+    }
+}
+
+/// Undoes every attempt still in flight, restoring `domains` and `assignment` to the state the
+/// descent started from.
+///
+/// Callers pass their frames deepest-first. This is what a recursive descent did implicitly
+/// while unwinding, and it is needed wherever a search is abandoned mid-tree — on a timeout or
+/// a restart budget — so that "no result" does not also mean "left the domains half-pruned".
+pub(crate) fn unwind<'a>(
+    frames: impl IntoIterator<Item = &'a mut SearchFrame>,
+    domains: &mut TrailedDomains,
+    assignment: &mut HashMap<VariableId, i64>,
+) {
+    for frame in frames {
+        frame.undo_attempt(domains, assignment);
+    }
 }
