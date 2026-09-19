@@ -268,13 +268,11 @@ impl LocalSearchSolver {
             if current_score > best_score {
                 best_score = current_score;
                 best_assignment.clone_from(&current_assignment);
-                // Only *feasible* solutions belong in the portfolio (as in `LnsSolver`):
-                // this solver's starting assignment violates hard constraints in all but
-                // the smallest models, and a portfolio that adopts one reports it as its
-                // solution.
-                if best_score.is_feasible()
-                    && let Some(incumbent) = &options.shared_incumbent
-                {
+                // Offered whether or not it is feasible. Past the smallest models this solver
+                // spends most of a run infeasible, and those near misses are exactly what a
+                // repair search wants to start from. `SharedIncumbent` keeps a starting point
+                // apart from an answer, so offering one can never become the portfolio's result.
+                if let Some(incumbent) = &options.shared_incumbent {
                     incumbent.offer(&best_assignment, best_score);
                 }
             }

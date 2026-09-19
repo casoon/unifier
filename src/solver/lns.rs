@@ -11,9 +11,24 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
-use crate::solver::{SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort};
+use crate::solver::{
+    AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
+};
 use crate::{Assignment, ScoreCalculator};
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// How long a portfolio worker waits for a sibling to produce something to repair before it
+/// builds a center itself. Local Search reaches its first complete assignment in milliseconds
+/// even on large models, so this is generous; the bound exists so that a model where nobody
+/// produces anything cannot leave this solver idling instead of working.
+const CENTER_WAIT: Duration = Duration::from_millis(250);
+
+/// The largest share of a run that may go into waiting for one.
+const CENTER_WAIT_DIVISOR: u32 = 10;
+
+/// How often that wait looks.
+const CENTER_POLL: Duration = Duration::from_millis(2);
 
 /// Large Neighborhood Search solver.
 #[derive(Debug)]
@@ -50,12 +65,63 @@ impl LnsSolver {
     /// Time: O(I * d^K) where I is number of LNS iterations, K is number of destroyed variables.
     /// Space: O(N * d) graph snapshot depth.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
-        let initial_outcome = self.repair_solver.solve(graph, options);
-        let initial = match initial_outcome.solution {
-            Some(solution) => solution,
-            None => return initial_outcome,
-        };
-        self.improve_from(graph, initial, options)
+        let start_time = Instant::now();
+
+        // In a portfolio this solver repairs; it does not construct. A sibling worker is already
+        // running the very tree search a construction here would run, and on a model too large
+        // for that search to reach a first complete assignment, duplicating it wastes the one
+        // worker that could have started from a near miss instead.
+        if let Some(incumbent) = &options.shared_incumbent {
+            // Never more than a small share of the run, and never long in absolute terms. A
+            // handle without siblings behind it — a caller passing one in, a short budget — must
+            // not turn into a solver that waits instead of working.
+            let wait = options.time_limit.map_or(CENTER_WAIT, |limit| {
+                CENTER_WAIT.min(limit / CENTER_WAIT_DIVISOR)
+            });
+            while start_time.elapsed() < wait && check_abort(options, start_time, 0).is_none() {
+                if let Some((assignment, score)) = incumbent.center()
+                    && Self::covers_every_variable(graph, &assignment)
+                {
+                    return self.improve_from(
+                        graph,
+                        Solution { assignment, score },
+                        &Self::remaining(options, start_time),
+                    );
+                }
+                thread::sleep(CENTER_POLL);
+            }
+            // Nobody produced anything to repair. Build a center after all rather than idle.
+        }
+
+        let initial_outcome = self
+            .repair_solver
+            .solve(graph, &Self::remaining(options, start_time));
+        match initial_outcome.solution {
+            Some(initial) => {
+                self.improve_from(graph, initial, &Self::remaining(options, start_time))
+            }
+            None => initial_outcome,
+        }
+    }
+
+    /// The options with the time limit reduced by what has already been spent, so that a phase
+    /// handed the "rest" of a run cannot start a full budget over again.
+    fn remaining(options: &SolverOptions, start_time: Instant) -> SolverOptions {
+        let mut remaining = options.clone();
+        remaining.time_limit = options
+            .time_limit
+            .map(|limit| limit.saturating_sub(start_time.elapsed()));
+        remaining
+    }
+
+    /// Whether `assignment` gives every variable a value its domain still allows — what the
+    /// destroy phase needs in order to freeze the part it keeps.
+    fn covers_every_variable(graph: &ValidatedGraph, assignment: &Assignment) -> bool {
+        graph.variables().keys().all(|variable| {
+            assignment
+                .get(variable)
+                .is_some_and(|value| graph.domains()[variable].contains(*value))
+        })
     }
 
     /// Repairs from a caller-provided baseline assignment. The baseline is used as the LNS
@@ -66,12 +132,7 @@ impl LnsSolver {
         baseline: &Assignment,
         options: &SolverOptions,
     ) -> SolveOutcome {
-        let baseline_is_complete = graph.variables().keys().all(|variable| {
-            baseline
-                .get(variable)
-                .is_some_and(|value| graph.domains()[variable].contains(*value))
-        });
-        if !baseline_is_complete {
+        if !Self::covers_every_variable(graph, baseline) {
             return self.solve(graph, options);
         }
         let score = ScoreCalculator.calculate_score(graph, baseline);
@@ -160,13 +221,16 @@ impl LnsSolver {
                 if solution.score > current_score {
                     current_score = solution.score;
                     current_assignment = solution.assignment.clone();
+                    // Shared whether or not it is feasible: a repaired near miss is a better
+                    // place for the next worker to start than the one it has, and
+                    // `SharedIncumbent` keeps a starting point apart from an answer.
+                    if let Some(incumbent) = &options.shared_incumbent {
+                        incumbent.offer(&current_assignment, current_score);
+                    }
                 }
                 if solution.score.is_feasible()
                     && best.as_ref().is_none_or(|best| solution.score > best.score)
                 {
-                    if let Some(incumbent) = &options.shared_incumbent {
-                        incumbent.offer(&solution.assignment, solution.score);
-                    }
                     best = Some(solution);
                 }
             }
@@ -176,10 +240,16 @@ impl LnsSolver {
             nodes_expanded: lns_step,
             elapsed: start_time.elapsed(),
         };
-        best.map_or_else(
-            || self.repair_solver.solve(graph, options),
-            |solution| SolveOutcome::feasible(solution, statistics, None),
-        )
+        match best {
+            Some(solution) => SolveOutcome::feasible(solution, statistics, None),
+            // The loop above only ends when the budget does, so there is nothing left to pay for
+            // another search. Starting one here would spend a second full time limit on top of
+            // the one already used, and say no more than this does.
+            None => SolveOutcome::aborted(
+                check_abort(options, start_time, lns_step).unwrap_or(AbortReason::Timeout),
+                statistics,
+            ),
+        }
     }
 }
 
