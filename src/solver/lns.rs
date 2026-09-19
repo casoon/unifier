@@ -159,8 +159,10 @@ impl LnsSolver {
             score: current_score,
         });
 
-        if let (Some(incumbent), Some(solution)) = (&options.shared_incumbent, &best) {
-            incumbent.offer(&solution.assignment, solution.score);
+        // The center this run starts from, feasible or not: whoever handed it over already knows
+        // it, but a caller-supplied baseline (`solve_from`) may be news to the portfolio.
+        if let Some(incumbent) = &options.shared_incumbent {
+            incumbent.offer(&current_assignment, current_score);
         }
 
         let start_time = Instant::now();
@@ -244,11 +246,16 @@ impl LnsSolver {
             Some(solution) => SolveOutcome::feasible(solution, statistics, None),
             // The loop above only ends when the budget does, so there is nothing left to pay for
             // another search. Starting one here would spend a second full time limit on top of
-            // the one already used, and say no more than this does.
+            // the one already used, and say no more than this does — except for how far the
+            // repairing got, which rides along as the center this run ended on.
             None => SolveOutcome::aborted(
                 check_abort(options, start_time, lns_step).unwrap_or(AbortReason::Timeout),
                 statistics,
-            ),
+            )
+            .with_best_effort(Some(Solution {
+                assignment: current_assignment,
+                score: current_score,
+            })),
         }
     }
 }

@@ -787,3 +787,92 @@ fn branch_and_bound_search_depth_does_not_live_on_the_call_stack() {
     assert_eq!(solution.assignment.len(), CHAIN_LENGTH);
     assert!(solution.score.is_feasible());
 }
+
+/// Plan 51, C2: a search that cannot vouch for an assignment still says how close it got.
+///
+/// Before this, a run ending one constraint short and a run that never got anywhere looked
+/// identical to the caller — "aborted, nothing here" — and a repair search had nowhere to begin.
+///
+/// Four mutually-different variables over three values. Stated pairwise on purpose: arc
+/// consistency finds every value supported and prunes nothing, so the model survives root
+/// propagation and is refuted only by searching it. A single `AllDifferent` would be wiped at
+/// the root instead, and a search that never reached an assignment has nothing to report — which
+/// is the other half of the contract, and not what these tests are about.
+fn a_clique_needing_one_more_value() -> ValidatedGraph {
+    let mut builder = ModelBuilder::new();
+    let vars: Vec<VariableId> = (0..4)
+        .map(|index| builder.new_var(format!("x{index}"), 0..=2))
+        .collect();
+    for first in 0..vars.len() {
+        for second in (first + 1)..vars.len() {
+            builder.add_constraint(Arc::new(NotEqual::new(vars[first], vars[second])));
+        }
+    }
+    builder.build().expect("graph")
+}
+
+#[test]
+fn local_search_reports_the_assignment_it_reached() {
+    let graph = a_clique_needing_one_more_value();
+    let outcome = LocalSearchSolver::default().solve(
+        &graph,
+        &SolverOptions {
+            time_limit: Some(Duration::from_millis(50)),
+            ..SolverOptions::default()
+        },
+    );
+
+    assert!(outcome.solution.is_none(), "no feasible assignment exists");
+    assert_eq!(
+        outcome.reached(),
+        outcome.best_effort.as_ref(),
+        "with no solution, the assignment reached is the fallback"
+    );
+
+    let reached = outcome
+        .best_effort
+        .expect("a complete assignment was reached");
+    assert_eq!(
+        reached.assignment.len(),
+        graph.variables().len(),
+        "complete, not the partial state of an abandoned descent"
+    );
+    assert!(
+        reached.score.hard < 0,
+        "and honest about breaking a rule: {}",
+        reached.score
+    );
+}
+
+/// The portfolio carries the same answer outward, including when a worker has *proven* the model
+/// impossible: "no plan exists, and this is the closest anyone gets" is more use than "no".
+#[test]
+fn the_portfolio_reports_the_assignment_it_reached() {
+    let graph = a_clique_needing_one_more_value();
+    let outcome = ParallelSolver::new().solve(
+        &graph,
+        &SolverOptions {
+            time_limit: Some(Duration::from_millis(500)),
+            ..SolverOptions::default()
+        },
+    );
+
+    assert!(outcome.solution.is_none(), "no feasible assignment exists");
+    assert_ne!(outcome.status, SolveStatus::Feasible);
+    let reached = outcome
+        .best_effort
+        .expect("a complete assignment was reached");
+    assert_eq!(reached.assignment.len(), graph.variables().len());
+    assert!(reached.score.hard < 0, "{}", reached.score);
+}
+
+/// And where a solution exists, the fallback stays empty — one place to look, never two.
+#[test]
+fn a_solved_model_has_nothing_to_fall_back_on() {
+    let outcome =
+        BacktrackingSolver::new().solve(&build_nqueens_graph(4), &SolverOptions::default());
+
+    assert!(outcome.solution.is_some());
+    assert_eq!(outcome.best_effort, None);
+    assert_eq!(outcome.reached(), outcome.solution.as_ref());
+}

@@ -193,19 +193,29 @@ impl ParallelSolver {
                     SolveOutcome::feasible(solution, statistics, None)
                 }
             }
-            None if proven_infeasible => {
-                // At least one complete solver (Backtracking, or LNS/Local Search's own
-                // immediate empty-domain check) exhaustively proved unsatisfiability.
-                SolveOutcome::infeasible(statistics)
+            None => {
+                // No solution, but the workers rarely end with nothing at all: whatever the best
+                // complete assignment among them was is already in the incumbent's center, and
+                // saying how close the portfolio got beats saying only that it failed. It leaves
+                // here as `best_effort`, never as a solution.
+                let best_effort = shared_incumbent
+                    .center()
+                    .map(|(assignment, score)| Solution { assignment, score });
+                let outcome = if proven_infeasible {
+                    // At least one complete solver (Backtracking, or LNS/Local Search's own
+                    // immediate empty-domain check) exhaustively proved unsatisfiability.
+                    SolveOutcome::infeasible(statistics)
+                } else if options
+                    .cancellation_token
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    SolveOutcome::aborted(AbortReason::Cancelled, statistics)
+                } else {
+                    SolveOutcome::aborted(AbortReason::Timeout, statistics)
+                };
+                outcome.with_best_effort(best_effort)
             }
-            None if options
-                .cancellation_token
-                .as_ref()
-                .is_some_and(CancellationToken::is_cancelled) =>
-            {
-                SolveOutcome::aborted(AbortReason::Cancelled, statistics)
-            }
-            None => SolveOutcome::aborted(AbortReason::Timeout, statistics),
         }
     }
 }

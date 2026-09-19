@@ -119,6 +119,18 @@ pub struct SolveOutcome {
     /// which may be loose if the search was aborted before narrowing it further). `None` for
     /// solvers that do not track a bound (Backtracking, Local Search, LNS, Parallel).
     pub bound: Option<HardSoftScore>,
+    /// The best **complete** assignment the search reached when it could not return one as a
+    /// solution. Vouching for an assignment is what `solution` is for, so this one generally
+    /// breaks hard constraints — `score.hard` says by how many.
+    ///
+    /// It is a place to continue from, never an answer: a caller that reports it as a result
+    /// reports something that breaks the rules. Set only while `solution` is `None`, so the two
+    /// can never be confused; ask [`Self::reached`] for the best complete assignment regardless
+    /// of how the run ended.
+    ///
+    /// Present on an [`SolveStatus::Infeasible`] outcome too, where it means the most useful
+    /// thing a solver can say about an impossible model: this is as close as it gets.
+    pub best_effort: Option<Solution>,
 }
 
 impl SolveOutcome {
@@ -133,6 +145,7 @@ impl SolveOutcome {
             solution: Some(solution),
             statistics,
             bound,
+            best_effort: None,
         }
     }
 
@@ -148,6 +161,7 @@ impl SolveOutcome {
             solution: Some(solution),
             statistics,
             bound,
+            best_effort: None,
         }
     }
 
@@ -158,6 +172,7 @@ impl SolveOutcome {
             solution: None,
             statistics,
             bound: None,
+            best_effort: None,
         }
     }
 
@@ -168,7 +183,32 @@ impl SolveOutcome {
             solution: None,
             statistics,
             bound: None,
+            best_effort: None,
         }
+    }
+
+    /// Attaches the best complete assignment this run reached (see [`Self::best_effort`]).
+    ///
+    /// Only an outcome without a solution has anything to attach: where a solution exists it is
+    /// already the best complete assignment, and holding a second copy would invite a caller to
+    /// pick the wrong one.
+    pub(crate) fn with_best_effort(mut self, best_effort: Option<Solution>) -> Self {
+        debug_assert!(
+            self.solution.is_none(),
+            "an outcome with a solution has no use for a fallback",
+        );
+        self.best_effort = best_effort;
+        self
+    }
+
+    /// The best complete assignment this run reached, whether or not the search could vouch for
+    /// it: the solution if there is one, the fallback otherwise.
+    ///
+    /// This is the question a repair search asks — it wants somewhere to continue from and does
+    /// not care how the previous run ended. A caller deciding what to *report* asks for
+    /// `solution` instead.
+    pub fn reached(&self) -> Option<&Solution> {
+        self.solution.as_ref().or(self.best_effort.as_ref())
     }
 }
 

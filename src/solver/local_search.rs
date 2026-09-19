@@ -150,6 +150,20 @@ impl LocalSearchSolver {
         let start_time = Instant::now();
         let mut rng = Lcg::new(options.seed);
 
+        // Asked before the starting assignment is built, not after. Building one is real work —
+        // a propagation pass and a greedy sweep — and on a small model it can come out solved,
+        // so a solver handed no budget at all would otherwise still produce a result. "No
+        // budget" has to mean no work, or it means nothing.
+        if let Some(reason) = check_abort(options, start_time, 0) {
+            return SolveOutcome::aborted(
+                reason,
+                SearchStatistics {
+                    nodes_expanded: 0,
+                    elapsed: start_time.elapsed(),
+                },
+            );
+        }
+
         let Some((domains, mut current_assignment)) = self.initial_assignment(graph, &mut rng)
         else {
             return SolveOutcome::infeasible(SearchStatistics {
@@ -169,6 +183,13 @@ impl LocalSearchSolver {
             if !constraint.is_satisfied(&current_assignment) {
                 violated.insert(ConstraintId(index as u32));
             }
+        }
+
+        // Offered before the first step, not only on improvement: a run cut short early — a
+        // portfolio sibling proving the model impossible, a tight budget — would otherwise leave
+        // nothing behind, although a complete assignment existed from the outset.
+        if let Some(incumbent) = &options.shared_incumbent {
+            incumbent.offer(&best_assignment, best_score);
         }
 
         let mut tabu_list: VecDeque<(VariableId, i64)> = VecDeque::with_capacity(self.tabu_tenure);
@@ -284,22 +305,31 @@ impl LocalSearchSolver {
         };
 
         if best_score.is_feasible() {
-            SolveOutcome::feasible(
+            return SolveOutcome::feasible(
                 Solution {
                     assignment: best_assignment,
                     score: best_score,
                 },
                 statistics,
                 None,
-            )
-        } else if deadlocked {
-            SolveOutcome::aborted(AbortReason::LocalOptimum, statistics)
+            );
+        }
+
+        // Nothing to vouch for, but this solver always holds a complete assignment: it starts
+        // from one and only ever moves a single variable. Returning it as `best_effort` is the
+        // difference between "the budget ran out" and "the budget ran out four constraints
+        // short" — and it is what a repair search needs in order to have anywhere to begin.
+        let best_effort = Some(Solution {
+            assignment: best_assignment,
+            score: best_score,
+        });
+        let reason = if deadlocked {
+            AbortReason::LocalOptimum
         } else {
             // The while condition became false: check_abort must have returned Some.
-            let reason =
-                check_abort(options, start_time, step_count).unwrap_or(AbortReason::Timeout);
-            SolveOutcome::aborted(reason, statistics)
-        }
+            check_abort(options, start_time, step_count).unwrap_or(AbortReason::Timeout)
+        };
+        SolveOutcome::aborted(reason, statistics).with_best_effort(best_effort)
     }
 
     /// Builds the starting assignment: root-level propagation first, then one greedy pass giving
