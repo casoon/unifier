@@ -34,6 +34,19 @@ use std::time::Instant;
 /// not depend on how big the model is.
 const CONFLICT_SAMPLES: usize = 4;
 
+/// Wie viele zuletzt gesetzte Variablen die Konstruktion zurücknimmt, wenn eine Variable keinen
+/// konfliktfreien Wert mehr hat. Klein, weil der Konflikt fast immer von einem der letzten
+/// Schritte kommt — und weil breites Zurücknehmen in eine vollständige Suche übergeht, die es
+/// hier gerade nicht sein soll.
+const RETRACTION_WIDTH: usize = 8;
+
+/// Wie viele Anläufe die Konstruktion nimmt, bevor der beste davon in die Reparatur geht.
+const CONSTRUCTION_ATTEMPTS: u32 = 8;
+
+/// Obergrenze fürs Zurücknehmen, je Variable. Ohne sie kann sich die Konstruktion im Kreis
+/// drehen; mit ihr endet sie immer — notfalls mit Konflikten, die die Reparatur danach aufräumt.
+const RETRACTION_BUDGET_PER_VARIABLE: usize = 4;
+
 /// Deterministic linear congruential generator for tie-breaking, seeded from
 /// [`SolverOptions::seed`] — the same generator `pathwise` uses for its annealing choices.
 ///
@@ -60,6 +73,14 @@ impl Lcg {
     /// An index below `len`, which must be non-zero.
     fn index(&mut self, len: usize) -> usize {
         (self.next() >> 11) as usize % len
+    }
+
+    /// Fisher-Yates over `items` — same seed, same order.
+    fn mix<T>(&mut self, items: &mut [T]) {
+        for index in (1..items.len()).rev() {
+            let other = self.index(index + 1);
+            items.swap(index, other);
+        }
     }
 
     /// Reservoir sampling over a run of equally-scoring candidates: called with `seen` counting
@@ -164,7 +185,35 @@ impl LocalSearchSolver {
             );
         }
 
-        let Some((domains, current_assignment)) = self.initial_assignment(graph, &mut rng) else {
+        // Mehrere Anläufe, der beste zählt. Die Konstruktion rät an den Gleichständen, und wie
+        // gut sie ausgeht, hängt daran spürbar: über verschiedene Würfel schwankt das Ergebnis
+        // zwischen „ein paar Verstöße" und „keiner". Ein Anlauf kostet Millisekunden, ein
+        // verpasster konfliktfreier Start die ganze Reparatur danach.
+        let mut best_start: Option<(TrailedDomains, HashMap<VariableId, i64>, HardSoftScore)> =
+            None;
+        for attempt in 0..CONSTRUCTION_ATTEMPTS {
+            if attempt > 0 && check_abort(options, start_time, 0).is_some() {
+                break;
+            }
+            let Some((domains, assignment)) = self.initial_assignment(graph, &mut rng) else {
+                return SolveOutcome::infeasible(SearchStatistics {
+                    nodes_expanded: 0,
+                    elapsed: start_time.elapsed(),
+                });
+            };
+            let score = self.score_calculator.calculate_score(graph, &assignment);
+            let better = best_start
+                .as_ref()
+                .is_none_or(|(_, _, held)| score.hard > held.hard);
+            if better {
+                best_start = Some((domains, assignment, score));
+            }
+            if score.is_feasible() {
+                // Konfliktfrei — ein weiterer Anlauf kann das nicht mehr verbessern.
+                break;
+            }
+        }
+        let Some((domains, current_assignment, _)) = best_start else {
             return SolveOutcome::infeasible(SearchStatistics {
                 nodes_expanded: 0,
                 elapsed: start_time.elapsed(),
@@ -441,11 +490,25 @@ impl LocalSearchSolver {
             return None;
         }
 
+        // Die engsten Variablen zuerst, unter gleich engen gemischt. Wer die Variable mit der
+        // größten Auswahl zuerst festlegt, verbraucht Platz, den eine andere gleich braucht.
         let mut var_ids: Vec<VariableId> = graph.variables().keys().copied().collect();
         var_ids.sort_unstable();
+        rng.mix(&mut var_ids);
+        var_ids.sort_by_key(|var_id| {
+            domains
+                .get(var_id)
+                .map_or(0, |domain| domain.values().len())
+        });
 
         let mut assignment = HashMap::with_capacity(var_ids.len());
-        for var_id in var_ids {
+        let mut placed: Vec<VariableId> = Vec::with_capacity(var_ids.len());
+        let mut queue: VecDeque<VariableId> = var_ids.into_iter().collect();
+        // Wie oft insgesamt zurückgenommen werden darf. Ohne Schranke kann sich das Zurücknehmen
+        // im Kreis drehen; mit ihr endet der Durchlauf immer, notfalls mit Konflikten.
+        let mut retractions = queue.len().saturating_mul(RETRACTION_BUDGET_PER_VARIABLE);
+
+        while let Some(var_id) = queue.pop_front() {
             let values = domains.get(&var_id)?.values();
             let (&first, rest) = values.split_first()?;
 
@@ -467,7 +530,42 @@ impl LocalSearchSolver {
                     }
                 }
             }
+
+            if fewest == 0 || retractions == 0 || placed.is_empty() {
+                assignment.insert(var_id, best_value);
+                placed.push(var_id);
+                continue;
+            }
+
+            // Kein Wert passt konfliktfrei. Statt den Konflikt zu behalten und weiterzulaufen —
+            // was die bisherige Konstruktion tat und was jeden späteren Schritt auf einem Fehler
+            // aufbauen lässt — werden die zuletzt gesetzten Variablen zurückgenommen und neu
+            // versucht. Der Zufall in der Gleichstandswahl sorgt dafür, dass der zweite Versuch
+            // nicht derselbe ist.
+            retractions -= 1;
             assignment.insert(var_id, best_value);
+            // Wer im Weg steht, steht im Constraint — nicht am Ende der Liste. Zurückgenommen
+            // wird, was die verletzten Constraints dieser Variablen sonst noch belegen.
+            let mut blocking: Vec<VariableId> = graph
+                .constraints_for_variable(var_id)
+                .iter()
+                .filter_map(|&cid| graph.get_constraint(cid))
+                .filter(|constraint| !constraint.is_satisfied(&assignment))
+                .flat_map(|constraint| constraint.scope().iter().copied())
+                .filter(|other| *other != var_id && assignment.contains_key(other))
+                .collect();
+            blocking.sort_unstable();
+            blocking.dedup();
+            rng.mix(&mut blocking);
+            blocking.truncate(RETRACTION_WIDTH);
+
+            assignment.remove(&var_id);
+            queue.push_front(var_id);
+            for undone in blocking {
+                assignment.remove(&undone);
+                placed.retain(|placed_id| *placed_id != undone);
+                queue.push_front(undone);
+            }
         }
 
         Some((domains, assignment))
