@@ -276,12 +276,13 @@ impl ScoreCalculator {
         graph: &ConstraintGraph,
         assignment: &HashMap<VariableId, i64>,
     ) -> HardSoftScore {
+        // Summed over how badly each constraint is broken, not over how many answered "no": a
+        // constraint spanning dozens of variables would otherwise cost the same whether one
+        // thing inside it collides or five, and the search would have no way down (see
+        // `Constraint::violations`).
         let mut hard_violations: i64 = 0;
-
         for constraint in graph.constraints() {
-            if !constraint.is_satisfied(assignment) {
-                hard_violations -= 1;
-            }
+            hard_violations -= i64::from(constraint.violations(assignment));
         }
 
         let (strong, medium, weak) =

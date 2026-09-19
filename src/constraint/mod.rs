@@ -81,6 +81,25 @@ pub trait Constraint: Debug + Send + Sync {
     /// or if unassigned variables do not violate the constraint yet.
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool;
 
+    /// How *many* ways this constraint is broken under `assignment`, not merely whether it is.
+    ///
+    /// `0` exactly when [`Self::is_satisfied`] is `true`; otherwise a count that falls as the
+    /// assignment gets closer to holding it. The default answers `1` for any violation, which
+    /// is what the score counted everywhere before this existed.
+    ///
+    /// A constraint over a handful of variables loses little by answering `1`. One over dozens
+    /// loses the search: resolving a single collision inside an already-broken constraint moves
+    /// the score by nothing, so tabu search, bound pruning and every acceptance rule are blind
+    /// to it — a plateau the size of the constraint's scope. Any constraint whose scope grows
+    /// with the model should count properly.
+    ///
+    /// # Complexity
+    /// May cost more than [`Self::is_satisfied`], which is allowed to stop at the first problem
+    /// it sees while this one has to look at all of them.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        u32::from(!self.is_satisfied(assignment))
+    }
+
     /// Explains a concrete violation, or returns `None` when the assignment does not violate
     /// this constraint or the implementation has no specialized explanation.
     ///

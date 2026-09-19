@@ -287,6 +287,20 @@ impl Constraint for AllDifferent {
         true
     }
 
+    /// Every assigned variable beyond the first holder of its value.
+    ///
+    /// Three variables on the same value count two, so freeing one of them is visible as
+    /// progress — which is the point: over a long scope, a single yes/no would make every
+    /// repair step look like no step at all.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        let mut seen = HashSet::new();
+        self.scope
+            .iter()
+            .filter_map(|var| assignment.get(var))
+            .filter(|&&val| !seen.insert(val))
+            .count() as u32
+    }
+
     /// Enforces generalized arc consistency (GAC) via Régin's algorithm: a bipartite maximum
     /// matching between scope variables and their candidate values, followed by a directed-graph
     /// analysis of that matching to identify exactly the (variable, value) edges that cannot

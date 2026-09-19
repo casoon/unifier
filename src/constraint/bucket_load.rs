@@ -226,6 +226,16 @@ impl Constraint for MaximumBucketLoad {
         self.first_excess(assignment).is_none()
     }
 
+    /// The total excess across buckets, not the number of buckets over their limit: a move that
+    /// takes one hour out of a bucket still three hours over has changed something, and the
+    /// search needs to see it.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        self.bucket_loads(assignment)
+            .into_iter()
+            .filter_map(|load| u32::try_from(load.saturating_sub(self.limit)).ok())
+            .fold(0u32, u32::saturating_add)
+    }
+
     fn explain(&self, assignment: &Assignment) -> Option<Explanation> {
         let (bucket, load) = self.first_excess(assignment)?;
         Some(Explanation {
@@ -424,6 +434,34 @@ impl Constraint for BucketBlockPattern {
             return true;
         }
         self.matches(&self.observed_pattern(assignment))
+    }
+
+    /// The distance to the nearest allowed shape: how many hours would have to move between
+    /// blocks to reach it, block by block against the closest candidate. A shape one hour off
+    /// therefore counts less than one that is three off, which is the gradient a repair follows.
+    ///
+    /// Optimistic on a partial assignment for the same reason [`Self::is_satisfied`] is: until
+    /// every task is placed the shape is still open.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        if !self.fully_determined(assignment) {
+            return 0;
+        }
+        let observed = self.observed_pattern(assignment);
+        self.allowed
+            .iter()
+            .map(|allowed| {
+                let width = allowed.len().max(observed.len());
+                (0..width)
+                    .map(|index| {
+                        let wanted = allowed.get(index).copied().unwrap_or(0);
+                        let got = observed.get(index).copied().unwrap_or(0);
+                        u32::try_from(wanted.abs_diff(got)).unwrap_or(u32::MAX)
+                    })
+                    .fold(0u32, u32::saturating_add)
+            })
+            .min()
+            // No allowed shape at all: nothing can match, so the count must not say "fine".
+            .unwrap_or(1)
     }
 
     fn explain(&self, assignment: &Assignment) -> Option<Explanation> {

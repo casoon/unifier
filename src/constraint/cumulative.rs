@@ -63,6 +63,36 @@ impl Constraint for Cumulative {
         &self.scope
     }
 
+    /// The total overload: how much demand exceeds the capacity, summed over the moments where
+    /// it does. Removing one task from an overloaded stretch therefore registers even while the
+    /// stretch is still over — a yes/no answer would hide every step but the last.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        let mut time_points = Vec::new();
+        for task in &self.tasks {
+            if let Some(&start) = assignment.get(&task.start) {
+                time_points.push(start);
+                time_points.push(start.saturating_add(duration_as_i64(task.duration)));
+            }
+        }
+        time_points.sort_unstable();
+        time_points.dedup();
+
+        let mut overload = 0u32;
+        for &moment in &time_points {
+            let mut demand: u32 = 0;
+            for task in &self.tasks {
+                if let Some(&start) = assignment.get(&task.start) {
+                    let end = start.saturating_add(duration_as_i64(task.duration));
+                    if moment >= start && moment < end {
+                        demand = demand.saturating_add(task.demand);
+                    }
+                }
+            }
+            overload = overload.saturating_add(demand.saturating_sub(self.capacity));
+        }
+        overload
+    }
+
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         // Collect all potential time boundaries
         let mut time_points = Vec::new();

@@ -169,6 +169,27 @@ impl Constraint for NoOverlap {
         &self.scope
     }
 
+    /// The number of overlapping pairs, so that clearing one of several collisions on the same
+    /// resource registers as progress rather than as standing still.
+    fn violations(&self, assignment: &HashMap<VariableId, i64>) -> u32 {
+        let mut overlaps = 0u32;
+        for (index, first) in self.tasks.iter().enumerate() {
+            for second in &self.tasks[index + 1..] {
+                let (Some(&start_first), Some(&start_second)) =
+                    (assignment.get(&first.start), assignment.get(&second.start))
+                else {
+                    continue;
+                };
+                let end_first = start_first.saturating_add(duration_as_i64(first.duration));
+                let end_second = start_second.saturating_add(duration_as_i64(second.duration));
+                if end_first > start_second && end_second > start_first {
+                    overlaps = overlaps.saturating_add(1);
+                }
+            }
+        }
+        overlaps
+    }
+
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         let n = self.tasks.len();
         for i in 0..n {
