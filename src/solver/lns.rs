@@ -11,6 +11,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
+use crate::solver::local_search::LocalSearchSolver;
 use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
 };
@@ -34,6 +35,9 @@ const CENTER_POLL: Duration = Duration::from_millis(2);
 #[derive(Debug)]
 pub struct LnsSolver {
     repair_solver: BacktrackingSolver,
+    /// The sub-search used while the center still breaks hard constraints — see the repair phase
+    /// in [`LnsSolver::improve_from`] for why an exact one cannot serve there.
+    conflict_repair: LocalSearchSolver,
     destroy_fraction: f64,
 }
 
@@ -41,6 +45,7 @@ impl Default for LnsSolver {
     fn default() -> Self {
         Self {
             repair_solver: BacktrackingSolver::new(),
+            conflict_repair: LocalSearchSolver::default(),
             destroy_fraction: 0.3,
         }
     }
@@ -51,6 +56,7 @@ impl LnsSolver {
     pub fn new(destroy_fraction: f64) -> Self {
         Self {
             repair_solver: BacktrackingSolver::new(),
+            conflict_repair: LocalSearchSolver::default(),
             destroy_fraction: destroy_fraction.clamp(0.1, 0.9),
         }
     }
@@ -218,23 +224,45 @@ impl LnsSolver {
                 shared_incumbent: options.shared_incumbent.clone(),
             };
 
-            let repair_outcome = self.repair_solver.solve(&sub_graph, &repair_options);
-            if let Some(solution) = repair_outcome.solution {
-                if solution.score > current_score {
-                    current_score = solution.score;
-                    current_assignment = solution.assignment.clone();
-                    // Shared whether or not it is feasible: a repaired near miss is a better
-                    // place for the next worker to start than the one it has, and
-                    // `SharedIncumbent` keeps a starting point apart from an answer.
-                    if let Some(incumbent) = &options.shared_incumbent {
-                        incumbent.offer(&current_assignment, current_score);
-                    }
+            // Which sub-search repairs depends on what the center is.
+            //
+            // While it breaks hard constraints, the sub-search has to *lower* the number of
+            // violations rather than demand none. An exact one demands none, so it reports
+            // nothing unless the relaxation happens to contain every violated constraint whole —
+            // and the constraints that matter here span dozens of variables, so it never does.
+            // Measured: with the center at 18 violations, an exact repair returned nothing in
+            // thirty seconds, whatever neighborhood it was given. That is the wall this work
+            // package exists to remove.
+            //
+            // Once the center is feasible the question changes: every step has to *stay*
+            // feasible while improving the objective, and that is what the exact search is for.
+            let repair_outcome = if current_score.is_feasible() {
+                self.repair_solver.solve(&sub_graph, &repair_options)
+            } else {
+                self.conflict_repair
+                    .repair_from(&sub_graph, &current_assignment, &repair_options)
+            };
+            // `reached()`, not `solution`: a repair that merely got closer is the whole point,
+            // and it arrives as the fallback rather than as a result (plan 51, C2).
+            let Some(candidate) = repair_outcome.reached() else {
+                continue;
+            };
+            if candidate.score > current_score {
+                current_score = candidate.score;
+                current_assignment = candidate.assignment.clone();
+                // Shared whether or not it is feasible: a repaired near miss is a better place
+                // for the next worker to start than the one it has, and `SharedIncumbent` keeps
+                // a starting point apart from an answer.
+                if let Some(incumbent) = &options.shared_incumbent {
+                    incumbent.offer(&current_assignment, current_score);
                 }
-                if solution.score.is_feasible()
-                    && best.as_ref().is_none_or(|best| solution.score > best.score)
-                {
-                    best = Some(solution);
-                }
+            }
+            if candidate.score.is_feasible()
+                && best
+                    .as_ref()
+                    .is_none_or(|best| candidate.score > best.score)
+            {
+                best = Some(candidate.clone());
             }
         }
 

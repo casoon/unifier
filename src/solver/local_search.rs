@@ -164,14 +164,94 @@ impl LocalSearchSolver {
             );
         }
 
-        let Some((domains, mut current_assignment)) = self.initial_assignment(graph, &mut rng)
-        else {
+        let Some((domains, current_assignment)) = self.initial_assignment(graph, &mut rng) else {
             return SolveOutcome::infeasible(SearchStatistics {
                 nodes_expanded: 0,
                 elapsed: start_time.elapsed(),
             });
         };
 
+        self.repair(graph, domains, current_assignment, options, start_time, rng)
+    }
+
+    /// Repairs `baseline` instead of building a starting assignment.
+    ///
+    /// The caller already holds a complete assignment and wants it *improved*, which is the
+    /// situation every repair search is actually in — after a destroy step, after a model change,
+    /// after another worker got close. Building a fresh starting assignment there would throw
+    /// away what is known and cost a propagation pass plus a sweep over every variable, per call.
+    ///
+    /// A value the baseline gives a variable is kept only while its domain still allows it;
+    /// otherwise the variable is placed like any other. That is what lets a caller pin part of
+    /// the model by narrowing domains and hand the rest over as-is.
+    pub fn repair_from(
+        &self,
+        graph: &ValidatedGraph,
+        baseline: &HashMap<VariableId, i64>,
+        options: &SolverOptions,
+    ) -> SolveOutcome {
+        let start_time = Instant::now();
+        let rng = Lcg::new(options.seed);
+
+        if let Some(reason) = check_abort(options, start_time, 0) {
+            return SolveOutcome::aborted(
+                reason,
+                SearchStatistics {
+                    nodes_expanded: 0,
+                    elapsed: start_time.elapsed(),
+                },
+            );
+        }
+
+        // Propagation is used where it helps and ignored where it does not. A baseline that
+        // breaks hard constraints makes the root fixpoint conflict — that is what "needs repair"
+        // means — and treating the conflict as "no assignment exists" would turn every call that
+        // has something to repair into a refusal. The narrowed domains are kept only when they
+        // came out consistent; otherwise the graph's own are used untouched.
+        let mut narrowed = TrailedDomains::new(graph.domains().clone());
+        let consistent = !matches!(
+            PropagationEngine::new().propagate(graph, &mut narrowed, None),
+            PropagationResult::Conflict
+        );
+        let domains = if consistent {
+            narrowed
+        } else {
+            TrailedDomains::new(graph.domains().clone())
+        };
+
+        let mut current_assignment = HashMap::with_capacity(graph.variables().len());
+        for (&variable, domain) in domains.iter() {
+            // The baseline's value where the domain still allows it, the domain's first value
+            // otherwise — a pinned variable therefore keeps its pin, and a relaxed one keeps
+            // whatever the caller was working with.
+            let value = match baseline.get(&variable) {
+                Some(&known) if domain.contains(known) => Some(known),
+                _ => domain.values().first().copied(),
+            };
+            let Some(value) = value else {
+                // A variable with nothing left to take: no complete assignment exists at all.
+                return SolveOutcome::infeasible(SearchStatistics {
+                    nodes_expanded: 0,
+                    elapsed: start_time.elapsed(),
+                });
+            };
+            current_assignment.insert(variable, value);
+        }
+
+        self.repair(graph, domains, current_assignment, options, start_time, rng)
+    }
+
+    /// The repair loop itself, shared by [`Self::solve`] and [`Self::repair_from`] — they differ
+    /// only in where the assignment it starts on comes from.
+    fn repair(
+        &self,
+        graph: &ValidatedGraph,
+        domains: TrailedDomains,
+        mut current_assignment: HashMap<VariableId, i64>,
+        options: &SolverOptions,
+        start_time: Instant,
+        mut rng: Lcg,
+    ) -> SolveOutcome {
         let mut current_score = self
             .score_calculator
             .calculate_score(graph, &current_assignment);
@@ -486,7 +566,20 @@ impl LocalSearchSolver {
         best_score: HardSoftScore,
         rng: &mut Lcg,
     ) -> Option<(VariableId, i64, HardSoftScore)> {
-        let mut var_ids: Vec<VariableId> = graph.variables().keys().copied().collect();
+        // Variables that can still take another value. A domain narrowed to one holds exactly
+        // the value the assignment already gives it, so there is no move to find and the scan
+        // learns nothing from looking — skipping it changes no outcome.
+        //
+        // It changes the cost, though, and by orders of magnitude where it matters: a caller
+        // that pinned most of the model by narrowing domains — which is what a repair search
+        // does after a destroy step — otherwise pays for a sweep over the whole model to
+        // rediscover that the pinned part is pinned, on every single step.
+        let mut var_ids: Vec<VariableId> = graph
+            .variables()
+            .keys()
+            .copied()
+            .filter(|variable| domains.get(variable).is_some_and(|d| d.values().len() > 1))
+            .collect();
         var_ids.sort_unstable();
 
         let mut best: Option<(VariableId, i64, HardSoftScore)> = None;
