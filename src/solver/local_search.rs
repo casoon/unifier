@@ -23,6 +23,7 @@ use crate::score::{HardSoftScore, ScoreCalculator};
 use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
 };
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
@@ -195,7 +196,9 @@ impl LocalSearchSolver {
             if attempt > 0 && check_abort(options, start_time, 0).is_some() {
                 break;
             }
-            let Some((domains, assignment)) = self.initial_assignment(graph, &mut rng) else {
+            let Some((domains, assignment)) =
+                self.initial_assignment(graph, &mut rng, options, start_time)
+            else {
                 return SolveOutcome::infeasible(SearchStatistics {
                     nodes_expanded: 0,
                     elapsed: start_time.elapsed(),
@@ -482,6 +485,8 @@ impl LocalSearchSolver {
         &self,
         graph: &ValidatedGraph,
         rng: &mut Lcg,
+        options: &SolverOptions,
+        start_time: Instant,
     ) -> Option<(TrailedDomains, HashMap<VariableId, i64>)> {
         let mut domains = TrailedDomains::new(graph.domains().clone());
         if let PropagationResult::Conflict =
@@ -509,6 +514,24 @@ impl LocalSearchSolver {
         let mut retractions = queue.len().saturating_mul(RETRACTION_BUDGET_PER_VARIABLE);
 
         while let Some(var_id) = queue.pop_front() {
+            // Die Konstruktion kennt ihre Zeit. Ohne das lief ein einmal begonnener Anlauf zu
+            // Ende, gleich wie lange er brauchte: auf einer kleinen Instanz Millisekunden, auf
+            // einer großen zwanzig Sekunden — und die Reparatur danach fand ein abgelaufenes
+            // Limit vor und tat keinen einzigen Schritt (timbra plan/59).
+            //
+            // Abgebrochen wird **mit** einer vollständigen Belegung, nicht mit nichts: der
+            // Rest bekommt den ersten Wert seiner Domäne, ohne Konflikte zu zählen. Das ist
+            // schlechter als eine zu Ende gedachte Konstruktion und immer noch genau das,
+            // worauf die Reparatur aufsetzen kann. Eine halb belegte Rückgabe wäre keine.
+            if check_abort(options, start_time, 0).is_some() {
+                for remaining in std::iter::once(var_id).chain(queue) {
+                    if let Entry::Vacant(slot) = assignment.entry(remaining) {
+                        slot.insert(*domains.get(&remaining)?.values().first()?);
+                    }
+                }
+                return Some((domains, assignment));
+            }
+
             let values = domains.get(&var_id)?.values();
             let (&first, rest) = values.split_first()?;
 
