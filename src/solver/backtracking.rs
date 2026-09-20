@@ -15,7 +15,7 @@ use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::ScoreCalculator;
 use crate::solver::{
     SearchFrame, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
-    order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
+    complete_deepest, order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -70,6 +70,10 @@ struct SearchState<'a> {
     /// that was cut short has proven nothing, while one that ran out of tree has proven the
     /// problem unsatisfiable.
     restarted: &'a mut bool,
+    /// The deepest partial assignment any descent reached, kept across restarts (plan 51, C6).
+    /// Unwinding throws the current one away, so a run that ends without a solution could
+    /// otherwise say only "nothing", never "all but eighteen variables".
+    deepest: &'a mut HashMap<VariableId, i64>,
 }
 
 impl BacktrackingSolver {
@@ -98,6 +102,7 @@ impl BacktrackingSolver {
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
         let mut weights = HashMap::new();
+        let mut deepest: HashMap<VariableId, i64> = HashMap::new();
 
         for attempt in 0.. {
             let mut current_domains = TrailedDomains::new(graph.domains().clone());
@@ -127,6 +132,7 @@ impl BacktrackingSolver {
                     nodes_count: &mut nodes_count,
                     weights: &mut weights,
                     restarted: &mut restarted,
+                    deepest: &mut deepest,
                 },
             );
             let statistics = SearchStatistics {
@@ -139,17 +145,39 @@ impl BacktrackingSolver {
                 return SolveOutcome::feasible(Solution { assignment, score }, statistics, None);
             }
             if let Some(reason) = check_abort(options, start_time, nodes_count) {
-                return SolveOutcome::aborted(reason, statistics);
+                return SolveOutcome::aborted(reason, statistics)
+                    .with_best_effort(self.best_effort(graph, options, &deepest));
             }
             if !restarted {
-                // The tree ran out rather than the budget, so there is nothing left to find.
-                return SolveOutcome::infeasible(statistics);
+                // The tree ran out rather than the budget, so there is nothing left to find. How
+                // close it got is still the most useful thing to say about an impossible model.
+                return SolveOutcome::infeasible(statistics)
+                    .with_best_effort(self.best_effort(graph, options, &deepest));
             }
             // Otherwise: re-dive, carrying the constraint weights this attempt just learned.
             // They are the whole point — without them the next descent would walk the same path
             // into the same dead end.
         }
         unreachable!("the restart loop only ends by returning")
+    }
+
+    /// The deepest descent, completed per C6, and offered to the portfolio on the way out.
+    ///
+    /// The offer is what makes it useful inside [`crate::solver::ParallelSolver`]: that solver
+    /// reports the incumbent's center, not its workers' outcomes, so an assignment that never
+    /// reaches the center is invisible to everyone but a standalone caller. `SharedIncumbent`
+    /// keeps the better of the two, so a near miss can never displace a closer one.
+    fn best_effort(
+        &self,
+        graph: &ValidatedGraph,
+        options: &SolverOptions,
+        deepest: &HashMap<VariableId, i64>,
+    ) -> Option<Solution> {
+        let reached = complete_deepest(graph, &self.score_calculator, deepest)?;
+        if let Some(incumbent) = &options.shared_incumbent {
+            incumbent.offer(&reached.assignment, reached.score);
+        }
+        Some(reached)
     }
 
     /// Explores assignments depth-first on an explicit stack of [`SearchFrame`]s, returning
@@ -190,6 +218,9 @@ impl BacktrackingSolver {
                 }
 
                 *state.nodes_count += 1;
+                if assignment.len() > state.deepest.len() {
+                    *state.deepest = assignment.clone();
+                }
 
                 if assignment.len() == graph.variables().len() {
                     // Every variable is assigned: this leaf either satisfies the hard constraints

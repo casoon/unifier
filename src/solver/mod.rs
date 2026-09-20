@@ -430,3 +430,36 @@ pub(crate) fn unwind<'a>(
         frame.undo_attempt(domains, assignment);
     }
 }
+
+/// The best complete assignment a tree search can report after it was cut short (plan 51, C6).
+///
+/// `deepest` is the deepest partial assignment the descent reached. Every variable still open
+/// gets its first value from the **original** domain — the propagated one is empty, which is
+/// precisely why the search stopped there. The result therefore breaks constraints, which is
+/// what makes it a [`SolveOutcome::best_effort`] and not a solution: it says how far the search
+/// came, and a repair search has somewhere to continue from.
+///
+/// `None` when the search never assigned anything (there is nothing to report) or when a
+/// variable has no value at all to take.
+///
+/// # Complexity
+/// Time: O(n) plus one score evaluation. Space: O(n).
+pub(crate) fn complete_deepest(
+    graph: &ConstraintGraph,
+    score_calculator: &crate::score::ScoreCalculator,
+    deepest: &HashMap<VariableId, i64>,
+) -> Option<Solution> {
+    if deepest.is_empty() {
+        return None;
+    }
+    let mut assignment = deepest.clone();
+    for variable in graph.variables().keys() {
+        if assignment.contains_key(variable) {
+            continue;
+        }
+        let value = *graph.domains().get(variable)?.values().first()?;
+        assignment.insert(*variable, value);
+    }
+    let score = score_calculator.calculate_score(graph, &assignment);
+    Some(Solution { assignment, score })
+}

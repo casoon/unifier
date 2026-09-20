@@ -15,7 +15,7 @@ use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
 use crate::solver::{
     AbortReason, SearchFrame, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
-    order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
+    complete_deepest, order_values_by_neighbor_domain_size, select_dom_wdeg_variable, unwind,
 };
 use std::collections::HashMap;
 use std::time::Instant;
@@ -36,6 +36,9 @@ struct SearchState<'a> {
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
     /// `select_dom_wdeg_variable`). Updated by [`PropagationEngine::propagate`].
     weights: &'a mut HashMap<ConstraintId, u32>,
+    /// The deepest partial assignment this descent reached (plan 51, C6). Only of interest when
+    /// no feasible solution turns up: it is what the run has to show for its time.
+    deepest: &'a mut HashMap<VariableId, i64>,
 }
 
 impl BranchAndBoundSolver {
@@ -77,6 +80,7 @@ impl BranchAndBoundSolver {
 
         let mut best_solution = None;
         let mut best_score = None;
+        let mut deepest: HashMap<VariableId, i64> = HashMap::new();
 
         if let PropagationResult::Conflict =
             self.propagator
@@ -103,6 +107,7 @@ impl BranchAndBoundSolver {
                 best_solution: &mut best_solution,
                 best_score: &mut best_score,
                 weights: &mut weights,
+                deepest: &mut deepest,
             },
         );
         let statistics = SearchStatistics {
@@ -120,13 +125,32 @@ impl BranchAndBoundSolver {
                     SolveOutcome::feasible(solution, statistics, Some(root_bound))
                 }
             }
-            _ if exhaustive => SolveOutcome::infeasible(statistics),
+            // No feasible solution, but the descent still got somewhere: how far is the only
+            // thing this run can report (plan 51, C6).
+            _ if exhaustive => SolveOutcome::infeasible(statistics)
+                .with_best_effort(self.best_effort(graph, options, &deepest)),
             _ => {
                 let reason =
                     check_abort(options, start_time, nodes_count).unwrap_or(AbortReason::Timeout);
                 SolveOutcome::aborted(reason, statistics)
+                    .with_best_effort(self.best_effort(graph, options, &deepest))
             }
         }
+    }
+
+    /// The deepest descent, completed per C6, and offered to the portfolio on the way out — see
+    /// [`BacktrackingSolver::best_effort`] for why the offer is the part that matters.
+    fn best_effort(
+        &self,
+        graph: &ValidatedGraph,
+        options: &SolverOptions,
+        deepest: &HashMap<VariableId, i64>,
+    ) -> Option<Solution> {
+        let reached = complete_deepest(graph, &self.score_calculator, deepest)?;
+        if let Some(incumbent) = &options.shared_incumbent {
+            incumbent.offer(&reached.assignment, reached.score);
+        }
+        Some(reached)
     }
 
     /// Explores assignments of unassigned variables depth-first, applying bound-based pruning.
@@ -171,6 +195,9 @@ impl BranchAndBoundSolver {
                 }
 
                 *state.nodes_count += 1;
+                if assignment.len() > state.deepest.len() {
+                    *state.deepest = assignment.clone();
+                }
 
                 if assignment.len() == graph.variables().len() {
                     let score = self.score_calculator.calculate_score(graph, assignment);

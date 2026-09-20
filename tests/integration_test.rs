@@ -866,6 +866,75 @@ fn the_portfolio_reports_the_assignment_it_reached() {
     assert!(reached.score.hard < 0, "{}", reached.score);
 }
 
+/// Plan 51, C6: a tree search cut short by its budget holds an assignment for *some* variables.
+/// It reports it, completed from the original domains — the propagated ones are empty, which is
+/// exactly why the descent stopped. Without this, the search that gets furthest is the one with
+/// nothing to say, and how close a run came stays invisible.
+///
+/// Eight queens with a five-node budget: the descent is stopped long before the board is filled,
+/// and everything it never reached takes column 1, which is a rule-breaking board and honest
+/// about it.
+#[test]
+fn an_aborted_backtracking_search_reports_how_far_it_got() {
+    let graph = build_nqueens_graph(8);
+    let outcome = BacktrackingSolver::new().solve(
+        &graph,
+        &SolverOptions {
+            max_nodes: Some(5),
+            ..SolverOptions::default()
+        },
+    );
+
+    assert_eq!(outcome.status, SolveStatus::Aborted(AbortReason::NodeLimit));
+    assert!(outcome.solution.is_none());
+    let reached = outcome
+        .best_effort
+        .expect("the descent assigned something before it was stopped");
+    assert_eq!(
+        reached.assignment.len(),
+        graph.variables().len(),
+        "complete, not the partial state of an abandoned descent"
+    );
+    assert!(
+        reached.score.hard < 0,
+        "and honest about breaking a rule: {}",
+        reached.score
+    );
+}
+
+/// The same for Branch & Bound, which stops for the same reasons and owes the same answer.
+#[test]
+fn an_aborted_branch_and_bound_search_reports_how_far_it_got() {
+    let graph = build_nqueens_graph(8);
+    let outcome = BranchAndBoundSolver::new().solve(
+        &graph,
+        &SolverOptions {
+            max_nodes: Some(5),
+            ..SolverOptions::default()
+        },
+    );
+
+    assert!(outcome.solution.is_none());
+    let reached = outcome
+        .best_effort
+        .expect("the descent assigned something before it was stopped");
+    assert_eq!(reached.assignment.len(), graph.variables().len());
+    assert!(reached.score.hard < 0, "{}", reached.score);
+}
+
+/// C4: a model the search *refutes* carries the answer too — "no assignment exists, and this is
+/// as close as it gets" is the most useful thing to say about an impossible model.
+#[test]
+fn a_refuted_model_still_says_how_close_it_gets() {
+    let graph = a_clique_needing_one_more_value();
+    let outcome = BacktrackingSolver::new().solve(&graph, &SolverOptions::default());
+
+    assert_eq!(outcome.status, SolveStatus::Infeasible);
+    let reached = outcome.best_effort.expect("the descent got somewhere");
+    assert_eq!(reached.assignment.len(), graph.variables().len());
+    assert!(reached.score.hard < 0, "{}", reached.score);
+}
+
 /// And where a solution exists, the fallback stays empty — one place to look, never two.
 #[test]
 fn a_solved_model_has_nothing_to_fall_back_on() {
