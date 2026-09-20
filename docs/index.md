@@ -16,7 +16,7 @@ fast, improve it, and stop whenever a time limit, node budget or cancellation sa
 
 - A constraint graph of variables, domains, constraints and objectives, validated before any
   solver sees it.
-- Sixteen built-in constraints in 0.4.0, including the global constraints `AllDifferent`,
+- Sixteen built-in constraints in 0.5.0, including the global constraints `AllDifferent`,
   `NoOverlap` and `Cumulative` with dedicated propagation.
 - Hard/soft scoring: hard constraints decide feasibility, weighted soft terms on three
   lexicographic levels rank feasible solutions.
@@ -28,7 +28,7 @@ fast, improve it, and stop whenever a time limit, node budget or cancellation sa
 
 ## Where it stops
 
-The crate is early (`0.3.x`). Not covered yet: general unsat cores, `serde`-based model or
+The crate is early (`0.5.x`). Not covered yet: general unsat cores, `serde`-based model or
 solution serialization, a command-line interface, and independent verification against
 production-scale scheduling scenarios. Evaluate it accordingly before relying on it for
 production planning.
@@ -39,4 +39,4 @@ production planning.
 - **Guides**: [modelling](guides/modelling/), [solvers](guides/solvers/) and how unifier
   [relates to pathwise](guides/pathwise/).
 - **Reference**: an overview of the public modules. Item-level documentation lives on
-  [docs.rs](https://docs.rs/unifier/0.4.0/unifier/).
+  [docs.rs](https://docs.rs/unifier/0.5.0/unifier/).

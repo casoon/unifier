@@ -10,6 +10,67 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-20
+
+A release about what a search may report. Until now a run either returned a fully feasible
+solution or nothing at all, and the score between those two states carried almost no
+information. Both are fixed here, and the construction that feeds the search was rebuilt.
+
+### Changed
+
+- **Breaking:** `SolveOutcome` has a new `best_effort` field, so a struct literal listing every
+  field no longer compiles. The constructors are unaffected.
+- **Breaking:** the hard score sums how *badly* each constraint is broken instead of counting
+  the constraints that answered "not satisfied". A `NoOverlap` over forty time points used to
+  cost the same for one collision as for five, so a move that resolved a collision *inside* an
+  already-broken constraint had score delta zero — invisible to tabu memory, to Branch & Bound
+  as a bound, and to every acceptance rule. `is_feasible()` is still `hard == 0` and means what
+  it meant; only the numbers in between changed, and any caller comparing hard scores across
+  runs of different versions will see different magnitudes.
+- **Breaking:** `SharedIncumbent::offer` records what it is given instead of dropping anything
+  infeasible. `best()` is unchanged — still feasible-only, still what a portfolio returns — but
+  callers no longer need to pre-filter, and the near miss a repair search wants now survives.
+- `BacktrackingSolver` and `BranchAndBoundSolver` descend over an explicit stack on the heap
+  rather than over the call stack. The depth of an assignment search is the number of variables,
+  so a recursive descent overflowed on large instances — and a stack overflow aborts the process,
+  leaving the caller with no result where it should have got "nothing within the budget". Two
+  guards pin it: 1000 variables on a 64 KiB stack, cross-checked against the recursive version.
+  Nothing gets faster from this; a large instance now reports its time limit instead of taking
+  the process with it.
+- `LargeNeighborhoodSearch` repairs an infeasible center with Local Search instead of asking an
+  exact sub-search for a fully feasible sub-assignment. A neighbourhood that contains a violated
+  constraint only in part is unsolvable by construction, and the constraints in question span
+  dozens of variables — measured, not one round in thirty seconds improved anything. While the
+  center is feasible the exact sub-search stays, which is the right tool for that question. Also
+  fixed: an exhausted LNS loop could spend a second full time limit.
+- The greedy construction in `LocalSearchSolver` takes back what stands in the way instead of
+  keeping a conflicted value: when no conflict-free value exists it un-assigns the *other*
+  variables in the violated constraints and re-queues them, bounded per variable so the
+  procedure stays finite. Tightest domains go first, ties shuffled, and several attempts run
+  with the best kept. Measured separately — conflict-directed rather than most-recent undo, and
+  tightest-first ordering, each account for a large part of it: on the reference instance the
+  construction went from 22 violations to none.
+
+### Added
+
+- `Constraint::violations`, answering how many ways a constraint is broken under an assignment —
+  `0` exactly when `is_satisfied` is `true`. It has a default returning `1` per violation, so
+  external implementations keep compiling and keep their old behaviour. `AllDifferent`,
+  `NoOverlap`, `Cumulative`, `MaximumBucketLoad` and `BucketBlockPattern` override it; the hard
+  score is the sum. Differential tests walk every assignment of a small instance per constraint
+  to hold the `0` ⇔ satisfied equivalence, which feasibility now depends on.
+- `SolveOutcome::best_effort` and `SolveOutcome::reached()`. `best_effort` is the best
+  **complete** assignment a run reached when it could not vouch for one, present on an
+  `Infeasible` outcome too; it is set only while `solution` is `None`, so the two can never be
+  confused. `reached()` is the question a repair search asks: somewhere to continue from,
+  regardless of how the previous run ended.
+- `SharedIncumbent::center()`, the best complete assignment offered so far whether feasible or
+  not. Read `center()` to decide where to work and `best()` to decide what to report.
+- `LocalSearchSolver::repair_from`, which repairs a caller's assignment instead of building its
+  own. A contradiction in root propagation is not a reason to stop here — a fixed assignment
+  being contradictory is what "repair" means — and the narrowed domains are adopted only when
+  they came out consistent.
+
 ## [0.4.0] - 2026-09-18
 
 A search release. The solvers were strong at proving optimality on small models and weak at
