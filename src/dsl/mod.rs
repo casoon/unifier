@@ -112,9 +112,17 @@ impl ModelBuilder {
     /// Adds `constraint` as optional: it only applies while `presence` is (or can still become)
     /// `1` — see [`Optional`] for the exact propagation semantics and [`Self::new_presence_var`]
     /// to create `presence`.
-    pub fn add_optional(&mut self, constraint: Arc<dyn Constraint>, presence: VariableId) {
+    ///
+    /// Returns the id of the wrapping constraint, so a caller that keeps a map from constraint
+    /// to the entity it speaks for can name this one too — a violation reported as
+    /// "ForbiddenValues is violated" tells nobody whose calendar was hit.
+    pub fn add_optional(
+        &mut self,
+        constraint: Arc<dyn Constraint>,
+        presence: VariableId,
+    ) -> ConstraintId {
         self.graph
-            .add_constraint(Arc::new(Optional::new(constraint, presence)));
+            .add_constraint(Arc::new(Optional::new(constraint, presence)))
     }
 
     /// Adds an `Equal` constraint `v1 = v2 + offset`.
@@ -151,9 +159,9 @@ impl ModelBuilder {
         &mut self,
         var: VariableId,
         forbidden: impl IntoIterator<Item = i64>,
-    ) {
+    ) -> ConstraintId {
         self.graph
-            .add_constraint(Arc::new(ForbiddenValues::new(var, forbidden)));
+            .add_constraint(Arc::new(ForbiddenValues::new(var, forbidden)))
     }
 
     /// Adds a calendar restriction: `var` may not take any value inside `unavailable_ranges`
@@ -170,11 +178,15 @@ impl ModelBuilder {
     ///
     /// # Complexity
     /// Time & Space: O(sum of range lengths) to expand the ranges into individual values.
-    pub fn add_calendar(&mut self, var: VariableId, unavailable_ranges: &[(i64, i64)]) {
+    pub fn add_calendar(
+        &mut self,
+        var: VariableId,
+        unavailable_ranges: &[(i64, i64)],
+    ) -> ConstraintId {
         let forbidden = unavailable_ranges
             .iter()
             .flat_map(|&(start, end)| start..=end);
-        self.add_forbidden_values(var, forbidden);
+        self.add_forbidden_values(var, forbidden)
     }
 
     /// Adds a compact periodic calendar restriction without expanding excluded values across the
