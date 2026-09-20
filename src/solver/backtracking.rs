@@ -61,7 +61,7 @@ fn luby(attempt: u32) -> u64 {
 struct SearchState<'a> {
     nodes_count: &'a mut u64,
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
-    /// [`select_dom_wdeg_variable`]). Updated by [`PropagationEngine::propagate`].
+    /// `select_dom_wdeg_variable`). Updated by [`PropagationEngine::propagate`].
     weights: &'a mut HashMap<ConstraintId, u32>,
     /// Node count at which the current attempt gives up so a restart can re-dive under the
     /// weights it just learned.
@@ -86,7 +86,7 @@ impl BacktrackingSolver {
     /// Variable ordering uses the `dom/wdeg` heuristic (see `select_dom_wdeg_variable`):
     /// constraints that cause conflicts accumulate weight, so branching increasingly favors
     /// variables most involved in past failures. Values are tried least-constraining first (see
-    /// [`order_values_by_neighbor_domain_size`]), which matters most here: this solver stops at
+    /// `order_values_by_neighbor_domain_size`), which matters most here: this solver stops at
     /// the *first* feasible assignment, so how fast it descends to one is the whole cost.
     ///
     /// # Complexity

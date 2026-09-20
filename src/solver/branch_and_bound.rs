@@ -34,7 +34,7 @@ struct SearchState<'a> {
     best_solution: &'a mut Option<HashMap<VariableId, i64>>,
     best_score: &'a mut Option<HardSoftScore>,
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
-    /// [`select_dom_wdeg_variable`]). Updated by [`PropagationEngine::propagate`].
+    /// `select_dom_wdeg_variable`). Updated by [`PropagationEngine::propagate`].
     weights: &'a mut HashMap<ConstraintId, u32>,
 }
 
@@ -65,7 +65,7 @@ impl BranchAndBoundSolver {
     /// # Complexity
     /// Time: O(d^n) worst-case, reduced by bound-based pruning (see [`ScoreCalculator::optimistic_score`]),
     /// `dom/wdeg` variable ordering and least-constraining-value ordering (see
-    /// [`select_dom_wdeg_variable`], [`order_values_by_neighbor_domain_size`]).
+    /// `select_dom_wdeg_variable`, `order_values_by_neighbor_domain_size`).
     /// Space: O(n * d) for the search stack and the domain trail; both live on the heap, so
     /// depth is bounded by memory rather than by the thread's stack size.
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
