@@ -10,6 +10,29 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-20
+
+### Fixed
+
+- `ExactlyOne` and `AtLeast` no longer report a violation under a **partial** assignment merely
+  because nothing has reached the target yet. `Constraint::is_satisfied` documents that it
+  answers `false` only when what is already assigned breaks the constraint — `AllDifferent`
+  looks only at assigned variables, `Equal` compares only when both sides are there, `AtMost`
+  counts upwards, and `BucketLoad` and `MinimumDistance` each pin the rule with a test of their
+  own. These two counted `== 1` and `>= k` outright, so a group nobody had chosen in yet
+  called itself broken while every variable in it could still become the one.
+
+  On a **complete** assignment nothing changes: there is nothing unassigned, and both fall back
+  to their old condition. The hard score, which sums over complete assignments, sees the same
+  numbers as before — which is why this stayed invisible for so long.
+
+  It was not cosmetic. The greedy construction in `LocalSearchSolver` places a variable without
+  retracting only when *no* constraint is violated, and a variable in an untouched choice group
+  could never meet that condition: it retracted, and took the variables it called "blocking"
+  with it. On a timetabling instance with 231 indicator variables, construction stalled at
+  ~105 violations across every seed; with the fix it reaches 0, and instances that had only
+  ever hit their time limit now solve (measured in timbra's plan/58, K3).
+
 ## [0.5.0] - 2026-09-20
 
 A release about what a search may report. Until now a run either returned a fully feasible
