@@ -10,6 +10,28 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+### Changed
+
+- `BacktrackingSolver` now asks the constraints of each newly assigned variable whether they
+  can still be satisfied (`Constraint::is_satisfiable`) after propagation succeeds, and treats
+  a "no" as a conflict — including the `dom/wdeg` weight increment a propagation conflict
+  gets. Before, a constraint whose `propagate` reported nothing was checked at the leaf alone:
+  a violation decided near the root cost a full sweep of every variable below it.
+  `BranchAndBoundSolver` never had that blind spot; its bound asks every constraint through
+  `optimistic_score`. This brings the tree search level with it.
+
+  Measured: a three-variable model with one unpropagated constraint over two booleans and a
+  20,001-value variable below them went from 216,614 nodes to 4
+  (`tests/unpropagated_constraint.rs`). On schedulr's scale instances, whose resource-capacity
+  constraint propagates only part of what it checks, the tree search went from 2,622 to 62
+  nodes and from 214,742 to 82, both solutions verified independently. Every deterministic
+  case in `examples/bench_search.rs` expands the same number of nodes as before; the N-Queens
+  Criterion benchmark moves by +3.0 %, −1.2 % and −2.3 % for n = 8, 10, 12.
+
+  The check is sound because `is_satisfiable` may answer `false` only when no completion can
+  satisfy the constraint — the contract 0.5.1 made `ExactlyOne` and `AtLeast` keep under
+  partial assignments.
+
 ## [0.5.1] - 2026-09-20
 
 ### Fixed

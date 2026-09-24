@@ -269,11 +269,49 @@ impl BacktrackingSolver {
                 graph.constraints_for_variable(var_id).iter().copied(),
                 Some(state.weights),
             ) {
-                descending = true;
+                // Propagation can only report what a constraint's propagator notices. A
+                // constraint whose `propagate` says nothing would otherwise be checked at the
+                // leaf alone — after every value of every variable below this one had been
+                // tried. Branch & Bound never had that blind spot: its bound asks every
+                // constraint `is_satisfiable` through `optimistic_score`. This asks the same,
+                // but only of this variable's constraints, the only ones this node can have
+                // made unsatisfiable (see `tests/unpropagated_constraint.rs`).
+                match first_unsatisfiable(graph, domains, assignment, var_id) {
+                    // Counted like a propagation conflict, so `dom/wdeg` learns from it too.
+                    Some(constraint) => *state.weights.entry(constraint).or_insert(1) += 1,
+                    None => descending = true,
+                }
             }
             // A conflict means this value is dead; the next turn undoes it and tries another.
         }
     }
+}
+
+/// The first of `var_id`'s constraints that can provably no longer be satisfied, given the
+/// assignment so far and the domains propagation left.
+///
+/// Only `var_id`'s constraints: the parent node was already free of such constraints, so
+/// assigning `var_id` is the only thing that can have changed an answer. That keeps the cost
+/// at the size of one variable's constraint list per node rather than the whole model.
+///
+/// Sound because `is_satisfiable` may return `false` only when no completion can satisfy the
+/// constraint — the contract `tests/partial_assignment.rs` holds `ExactlyOne` and `AtLeast`
+/// to, and the one Branch & Bound's bound already relies on.
+fn first_unsatisfiable(
+    graph: &ConstraintGraph,
+    domains: &TrailedDomains,
+    assignment: &HashMap<VariableId, i64>,
+    var_id: VariableId,
+) -> Option<ConstraintId> {
+    graph
+        .constraints_for_variable(var_id)
+        .iter()
+        .copied()
+        .find(|&constraint_id| {
+            graph
+                .get_constraint(constraint_id)
+                .is_some_and(|constraint| !constraint.is_satisfiable(domains, assignment))
+        })
 }
 
 #[cfg(test)]
