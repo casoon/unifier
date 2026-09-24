@@ -8,7 +8,7 @@ changes.
 Versions 0.2.0 to 0.3.1 were published to crates.io before the matching changes were committed;
 the repository history records them after the fact, one commit per release.
 
-## [Unreleased]
+## [0.5.3] - 2026-09-24
 
 ### Changed
 
