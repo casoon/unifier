@@ -16,6 +16,7 @@ use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
 };
 use crate::{Assignment, ScoreCalculator};
+use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -120,6 +121,20 @@ impl LnsSolver {
         remaining
     }
 
+    /// Every variable in the scope of a constraint `assignment` breaks.
+    fn variables_of_violated_constraints(
+        graph: &ValidatedGraph,
+        assignment: &Assignment,
+    ) -> HashSet<VariableId> {
+        graph
+            .graph()
+            .constraints()
+            .iter()
+            .filter(|constraint| !constraint.is_satisfied(assignment))
+            .flat_map(|constraint| constraint.scope().iter().copied())
+            .collect()
+    }
+
     /// Whether `assignment` gives every variable a value its domain still allows — what the
     /// destroy phase needs in order to freeze the part it keeps.
     fn covers_every_variable(graph: &ValidatedGraph, assignment: &Assignment) -> bool {
@@ -197,10 +212,20 @@ impl LnsSolver {
             let mut sub_graph = graph.graph().clone();
             let mut sub_domains = sub_graph.domains().clone();
 
+            // While the center breaks hard constraints, every variable of a violated one stays
+            // released: frozen to its current value, a unary violation (a new calendar block,
+            // say) empties its domain on the first propagation and fails the neighbourhood
+            // outright — so only a rotation that happened to hold every such variable at once
+            // could ever repair. Conflict-directed, on top of the rotating neighbourhood.
+            let released = if current_score.is_feasible() {
+                HashSet::new()
+            } else {
+                Self::variables_of_violated_constraints(graph, &current_assignment)
+            };
             let destroy_offset = (lns_step as usize) % vars.len();
             for i in 0..vars.len() {
                 let v = vars[(i + destroy_offset) % vars.len()];
-                if i >= n_destroy {
+                if i >= n_destroy && !released.contains(&v) {
                     // Freeze variable v to its current assigned value
                     if let Some(&assigned_val) = current_assignment.get(&v)
                         && let Some(d) = sub_domains.get_mut(&v)
@@ -331,5 +356,43 @@ mod tests {
             .solution
             .expect("feasible: single unconstrained variable");
         assert_eq!(incumbent.best_score(), Some(solution.score));
+    }
+
+    #[test]
+    fn a_baseline_broken_by_a_new_restriction_is_repaired() {
+        // Every value of the baseline is now forbidden by a unary hard constraint (a new
+        // calendar block inside a long horizon — beyond 4096 values propagation only trims the
+        // bounds, so the value stays in the domain). Freezing such a variable makes its
+        // neighbourhood unsolvable at once, so variables of violated constraints must always be
+        // released.
+        let mut graph = ConstraintGraph::new();
+        let mut baseline = Assignment::new();
+        for index in 0..20 {
+            let variable = VariableId(index);
+            graph.add_variable(
+                crate::model::variable::Variable::new(variable, "v"),
+                Domain::range(0, 10_000),
+            );
+            graph.add_constraint(Arc::new(
+                crate::constraint::periodic_values::PeriodicValues::new(
+                    variable,
+                    6,
+                    0..6,
+                    [(3_000, 3_000)],
+                ),
+            ));
+            baseline.insert(variable, 3_000);
+        }
+        let graph = graph.finalize().unwrap();
+        let options = SolverOptions {
+            time_limit: Some(std::time::Duration::from_millis(3000)),
+            ..SolverOptions::default()
+        };
+
+        let outcome = LnsSolver::default().solve_from(&graph, &baseline, &options);
+        let solution = outcome
+            .solution
+            .expect("the repair leaves the blocked value behind");
+        assert!(solution.assignment.values().all(|value| *value != 3_000));
     }
 }
