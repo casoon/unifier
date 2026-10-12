@@ -657,17 +657,21 @@ impl LocalSearchSolver {
         // its share of the score before the move: both are taken once here, not once per value.
         // Measured on a timetable repair, the per-value scan over every objective and the
         // re-evaluation of the unchanged old value were more than half of each step.
-        let touched = MoveScope::of(graph, var_id);
-        let before = touched.share(assignment);
+        let touched = MoveScope::of(graph, var_id, assignment);
+        let violations_before = touched.violations_before(assignment);
 
         for candidate in domains.get(&var_id)?.values() {
             if candidate == current_value {
                 continue;
             }
-            assignment.insert(var_id, candidate);
-            let after = touched.share(assignment);
-            assignment.insert(var_id, current_value);
-            let score = before.applied_to(current_score, after);
+            let score = touched.score_after(
+                assignment,
+                var_id,
+                candidate,
+                current_value,
+                violations_before,
+                current_score,
+            );
             // Aspiration criterion: a tabu move is allowed when it beats the overall best.
             if tabu_list.contains(&(var_id, candidate)) && score <= best_score {
                 continue;
@@ -743,26 +747,32 @@ impl LocalSearchSolver {
 
 /// The constraints and objectives one variable's move can change, collected once per move.
 struct MoveScope<'g> {
-    constraints: Vec<&'g Arc<dyn Constraint>>,
+    constraints: Vec<TouchedConstraint<'g>>,
     objectives: Vec<&'g Arc<dyn Objective>>,
 }
 
-/// One move scope's part of the score: constraint violations and objective totals per level.
-#[derive(Clone, Copy)]
-struct Share {
-    violations: i64,
-    strong: i64,
-    medium: i64,
-    weak: i64,
+/// A constraint a move touches: with its prepared evaluator where it offers one
+/// ([`Constraint::move_violations`]), counted in full per candidate otherwise.
+struct TouchedConstraint<'g> {
+    constraint: &'g Arc<dyn Constraint>,
+    by_value: Option<Box<dyn Fn(i64) -> u32 + 'g>>,
 }
 
 impl<'g> MoveScope<'g> {
-    fn of(graph: &'g ValidatedGraph, var_id: VariableId) -> Self {
+    fn of(
+        graph: &'g ValidatedGraph,
+        var_id: VariableId,
+        assignment: &HashMap<VariableId, i64>,
+    ) -> Self {
         Self {
             constraints: graph
                 .constraints_for_variable(var_id)
                 .iter()
                 .filter_map(|&cid| graph.get_constraint(cid))
+                .map(|constraint| TouchedConstraint {
+                    constraint,
+                    by_value: constraint.move_violations(assignment, var_id),
+                })
                 .collect(),
             objectives: graph
                 .objectives()
@@ -772,49 +782,77 @@ impl<'g> MoveScope<'g> {
         }
     }
 
-    fn share(&self, assignment: &HashMap<VariableId, i64>) -> Share {
-        let mut share = Share {
-            // Graded, as in `ScoreCalculator::calculate_score`: one more clash inside a constraint
-            // that is already broken has to cost something, or the search stacks clashes there.
-            violations: self
+    /// Hard violations of the touched constraints, graded as in
+    /// [`ScoreCalculator::calculate_score`]: one more clash inside a constraint that is already
+    /// broken has to cost something, or the search stacks clashes there.
+    fn violations_before(&self, assignment: &HashMap<VariableId, i64>) -> i64 {
+        self.constraints
+            .iter()
+            .map(|touched| i64::from(touched.constraint.violations(assignment)))
+            .sum()
+    }
+
+    /// The same count with `var_id` at `candidate`: prepared evaluators answer directly, the
+    /// rest is counted on the assignment with the candidate written in.
+    fn violations_after(
+        &self,
+        assignment: &mut HashMap<VariableId, i64>,
+        var_id: VariableId,
+        candidate: i64,
+        current_value: i64,
+    ) -> i64 {
+        let mut total = 0i64;
+        let mut unprepared = false;
+        for touched in &self.constraints {
+            match &touched.by_value {
+                Some(by_value) => total = total.saturating_add(i64::from(by_value(candidate))),
+                None => unprepared = true,
+            }
+        }
+        if unprepared {
+            assignment.insert(var_id, candidate);
+            for touched in self
                 .constraints
                 .iter()
-                .map(|constraint| i64::from(constraint.violations(assignment)))
-                .sum(),
-            strong: 0,
-            medium: 0,
-            weak: 0,
-        };
-        for objective in &self.objectives {
-            let value = objective.evaluate(assignment);
-            let level = match objective.level() {
-                ScoreLevel::Strong => &mut share.strong,
-                ScoreLevel::Medium => &mut share.medium,
-                ScoreLevel::Weak => &mut share.weak,
-            };
-            *level = level.saturating_add(value);
+                .filter(|touched| touched.by_value.is_none())
+            {
+                total = total.saturating_add(i64::from(touched.constraint.violations(assignment)));
+            }
+            assignment.insert(var_id, current_value);
         }
-        share
+        total
     }
-}
 
-impl Share {
-    /// `current` with this share replaced by `after`: the incremental form of
-    /// [`ScoreCalculator::calculate_score`], graded the same way.
-    fn applied_to(self, current: HardSoftScore, after: Share) -> HardSoftScore {
+    /// `current` after moving `var_id` from `current_value` to `candidate`: the incremental form
+    /// of [`ScoreCalculator::calculate_score`]. Objectives answer with [`Objective::delta`], so
+    /// one spanning many entities recomputes only what the move touches.
+    fn score_after(
+        &self,
+        assignment: &mut HashMap<VariableId, i64>,
+        var_id: VariableId,
+        candidate: i64,
+        current_value: i64,
+        violations_before: i64,
+        current: HardSoftScore,
+    ) -> HardSoftScore {
+        let (mut strong, mut medium, mut weak) = (0i64, 0i64, 0i64);
+        for objective in &self.objectives {
+            let delta = objective.delta(assignment, var_id, candidate);
+            let level = match objective.level() {
+                ScoreLevel::Strong => &mut strong,
+                ScoreLevel::Medium => &mut medium,
+                ScoreLevel::Weak => &mut weak,
+            };
+            *level = level.saturating_add(delta);
+        }
+        let violations_after = self.violations_after(assignment, var_id, candidate, current_value);
         HardSoftScore::tiered(
             current
                 .hard
-                .saturating_add(self.violations.saturating_sub(after.violations)),
-            current
-                .strong
-                .saturating_add(after.strong.saturating_sub(self.strong)),
-            current
-                .medium
-                .saturating_add(after.medium.saturating_sub(self.medium)),
-            current
-                .weak
-                .saturating_add(after.weak.saturating_sub(self.weak)),
+                .saturating_add(violations_before.saturating_sub(violations_after)),
+            current.strong.saturating_add(strong),
+            current.medium.saturating_add(medium),
+            current.weak.saturating_add(weak),
         )
     }
 }

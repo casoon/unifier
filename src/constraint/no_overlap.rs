@@ -190,6 +190,56 @@ impl Constraint for NoOverlap {
         overlaps
     }
 
+    /// The pairs among the other tasks do not change when `var` moves, so they are counted once;
+    /// per candidate only the moved tasks are checked against the others, from intervals
+    /// resolved up front instead of two lookups per pair.
+    fn move_violations<'s>(
+        &'s self,
+        assignment: &HashMap<VariableId, i64>,
+        var: VariableId,
+    ) -> Option<Box<dyn Fn(i64) -> u32 + 's>> {
+        let moved: Vec<i64> = self
+            .tasks
+            .iter()
+            .filter(|task| task.start == var)
+            .map(|task| duration_as_i64(task.duration))
+            .collect();
+        let others: Vec<(i64, i64)> = self
+            .tasks
+            .iter()
+            .filter(|task| task.start != var)
+            .filter_map(|task| {
+                let start = *assignment.get(&task.start)?;
+                Some((start, start.saturating_add(duration_as_i64(task.duration))))
+            })
+            .collect();
+        // Moved tasks share their start, so among themselves they overlap exactly when both last.
+        let lasting = moved.iter().filter(|duration| **duration > 0).count() as u32;
+        let mutual = lasting.saturating_mul(lasting.saturating_sub(1)) / 2;
+        let cross = move |value: i64| -> u32 {
+            let mut count = 0u32;
+            for &duration in &moved {
+                let end = value.saturating_add(duration);
+                for &(start, other_end) in &others {
+                    if end > start && other_end > value {
+                        count = count.saturating_add(1);
+                    }
+                }
+            }
+            count
+        };
+        let base = match assignment.get(&var) {
+            Some(&current) => self
+                .violations(assignment)
+                .saturating_sub(cross(current))
+                .saturating_sub(mutual),
+            None => self.violations(assignment),
+        };
+        Some(Box::new(move |value| {
+            base.saturating_add(cross(value)).saturating_add(mutual)
+        }))
+    }
+
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         let n = self.tasks.len();
         for i in 0..n {
@@ -328,6 +378,55 @@ impl Constraint for NoOverlap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The prepared evaluator agrees with `violations` for every candidate: shared start
+    /// variables, zero durations and unassigned variables included.
+    #[test]
+    fn move_violations_agree_with_violations() {
+        let starts: Vec<VariableId> = (0..12).map(VariableId).collect();
+        let tasks: Vec<TaskInterval> = (0..16)
+            .map(|index| TaskInterval {
+                // Tasks 12..16 share a start with 0..4 — two intervals of one activity.
+                start: starts[index % 12],
+                duration: [0, 1, 2, 3][index % 4],
+            })
+            .collect();
+        let constraint = NoOverlap::new(tasks);
+
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        let mut assignment = HashMap::new();
+        for &start in &starts {
+            if next(6) > 0 {
+                assignment.insert(start, next(20) as i64);
+            }
+        }
+        for step in 0..2_000 {
+            let var = starts[next(12) as usize];
+            let by_value = constraint
+                .move_violations(&assignment, var)
+                .expect("an evaluator");
+            for value in 0..22 {
+                let mut moved = assignment.clone();
+                moved.insert(var, value);
+                assert_eq!(
+                    by_value(value),
+                    constraint.violations(&moved),
+                    "step {step}: {var:?} to {value}"
+                );
+            }
+            if next(2) == 0 {
+                assignment.insert(var, next(20) as i64);
+            } else if next(4) == 0 {
+                assignment.remove(&var);
+            }
+        }
+    }
     use crate::model::domain::Domain;
 
     /// Three tasks, duration 2 each, all with start in `[0,3]` (so `est=0`, `lct=3+2=5` for

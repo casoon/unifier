@@ -100,6 +100,22 @@ pub trait Constraint: Debug + Send + Sync {
         u32::from(!self.is_satisfied(assignment))
     }
 
+    /// [`Self::violations`] as a function of `var`'s value, everything else as in `assignment` —
+    /// prepared once for a move, then asked for every candidate value.
+    ///
+    /// Local search scores each candidate of a move; a constraint over many variables otherwise
+    /// re-reads and re-sorts all of them each time, although only one moved. `None` (the
+    /// default) falls back to [`Self::violations`] per candidate. An evaluator must agree with
+    /// `violations` for every value — test it against it.
+    fn move_violations<'s>(
+        &'s self,
+        assignment: &HashMap<VariableId, i64>,
+        var: VariableId,
+    ) -> Option<Box<dyn Fn(i64) -> u32 + 's>> {
+        let _ = (assignment, var);
+        None
+    }
+
     /// Explains a concrete violation, or returns `None` when the assignment does not violate
     /// this constraint or the implementation has no specialized explanation.
     ///

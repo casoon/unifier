@@ -17,6 +17,12 @@ the repository history records them after the fact, one commit per release.
   graded constraint such as `MaximumBucketLoad` or `BucketBlockPattern` hands the search its own
   gradient. Its scope is the constraint's, which keeps incremental scoring local.
 
+- `Objective::delta` and `Constraint::move_violations`: an objective can answer a move with the
+  change it causes, and a constraint can prepare an evaluator once per move that answers each
+  candidate value. Defaults keep the full evaluation; `CategorizedObjective` forwards `delta`,
+  `NoOverlap` prepares an evaluator (pairs among the other tasks counted once). Local search
+  uses both — on timetable repairs 2.7–5× more steps per second.
+
 ### Changed
 
 - Repair from an infeasible baseline builds chains of moves: while the LNS center breaks hard

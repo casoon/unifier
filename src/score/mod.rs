@@ -151,6 +151,32 @@ pub trait Objective: Debug + Send + Sync {
     /// [`crate::constraint::Constraint::is_satisfied`]'s partial-assignment convention.
     fn evaluate(&self, assignment: &HashMap<VariableId, i64>) -> i64;
 
+    /// How [`Self::evaluate`] changes when `var` moves from its value in `assignment` to
+    /// `new_value`: `evaluate(after) - evaluate(before)`. `assignment` comes back unchanged.
+    ///
+    /// Local search asks this for every candidate value of every move. The default evaluates
+    /// twice, which is exact but costs the whole objective each time; an objective spanning many
+    /// entities should override it and recompute only what `var` touches. An override must
+    /// agree with the default for every assignment — test it against it.
+    ///
+    /// # Complexity
+    /// Default: twice [`Self::evaluate`].
+    fn delta(
+        &self,
+        assignment: &mut HashMap<VariableId, i64>,
+        var: VariableId,
+        new_value: i64,
+    ) -> i64 {
+        let before = self.evaluate(assignment);
+        let previous = assignment.insert(var, new_value);
+        let after = self.evaluate(assignment);
+        match previous {
+            Some(value) => assignment.insert(var, value),
+            None => assignment.remove(&var),
+        };
+        after.saturating_sub(before)
+    }
+
     /// Returns an optimistic (never-underestimating) upper bound on this objective's
     /// contribution given the current, possibly not-yet-singleton, `domains`.
     ///
@@ -197,6 +223,15 @@ impl Objective for CategorizedObjective {
 
     fn evaluate(&self, assignment: &HashMap<VariableId, i64>) -> i64 {
         self.inner.evaluate(assignment)
+    }
+
+    fn delta(
+        &self,
+        assignment: &mut HashMap<VariableId, i64>,
+        var: VariableId,
+        new_value: i64,
+    ) -> i64 {
+        self.inner.delta(assignment, var, new_value)
     }
 
     fn optimistic_bound(&self, domains: &HashMap<VariableId, Domain>) -> i64 {
@@ -484,5 +519,46 @@ mod tests {
         assert_eq!(penalty.evaluate(&one_outside), -5);
         assert_eq!(penalty.scope(), &[a, b, c]);
         assert_eq!(penalty.optimistic_bound(&HashMap::new()), 0);
+    }
+
+    #[test]
+    fn the_default_delta_is_the_difference_of_two_evaluations() {
+        let (x, y) = (VariableId(0), VariableId(1));
+        let sum = WeightedSum::new([x, y], 3);
+        let mut assignment = HashMap::from([(x, 2), (y, 5)]);
+        let before = assignment.clone();
+
+        assert_eq!(sum.delta(&mut assignment, x, 7), 15);
+        assert_eq!(assignment, before, "the assignment comes back unchanged");
+        // A variable without a value yet: the move assigns it, and it is unassigned again after.
+        let z = VariableId(2);
+        let with_z = WeightedSum::new([x, z], 1);
+        assert_eq!(with_z.delta(&mut assignment, z, 4), 4);
+        assert!(!assignment.contains_key(&z));
+    }
+
+    #[test]
+    fn a_categorized_objective_forwards_delta() {
+        #[derive(Debug)]
+        struct Local;
+        impl Objective for Local {
+            fn name(&self) -> &str {
+                "local"
+            }
+            fn scope(&self) -> &[VariableId] {
+                &[]
+            }
+            fn evaluate(&self, _assignment: &HashMap<VariableId, i64>) -> i64 {
+                0
+            }
+            fn delta(&self, _: &mut HashMap<VariableId, i64>, _: VariableId, _: i64) -> i64 {
+                42
+            }
+            fn optimistic_bound(&self, _domains: &HashMap<VariableId, Domain>) -> i64 {
+                0
+            }
+        }
+        let wrapped = CategorizedObjective::new("goal", ScoreLevel::Weak, Arc::new(Local));
+        assert_eq!(wrapped.delta(&mut HashMap::new(), VariableId(0), 1), 42);
     }
 }
