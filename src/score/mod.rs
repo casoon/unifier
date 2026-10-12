@@ -7,6 +7,7 @@
 //! - De Causmaecker, P., et al. (2002). *The state of the art for nurse rostering problems*.
 //!   Annals of Operations Research, 113, 11-38.
 
+use crate::constraint::Constraint;
 use crate::model::domain::Domain;
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ConstraintGraph;
@@ -261,6 +262,62 @@ impl Objective for WeightedSum {
     }
 }
 
+/// A [`Constraint`] used as a preference instead of a rule: every violation it counts costs
+/// `weight` soft points, and the solver never rejects an assignment because of it.
+///
+/// The penalty is `weight * constraint.violations(assignment)`, so a constraint whose
+/// [`Constraint::violations`] is graded (a load cap counting the excess, a block pattern counting
+/// the distance to the nearest allowed shape) hands the search the same gradient as a soft goal
+/// written for the purpose. The scope is the constraint's own, which keeps incremental scoring
+/// local: only moves of variables the constraint watches re-evaluate it.
+///
+/// Requires a non-negative `weight`; a negative one would reward violations and disables bound
+/// pruning (see [`Objective::optimistic_bound`]).
+///
+/// # Complexity
+/// `evaluate`: the wrapped constraint's `violations`. `optimistic_bound`: O(1).
+///
+/// Reference:
+/// - Schiex, T., Fargier, H., & Verfaillie, G. (1995). *Valued Constraint Satisfaction Problems:
+///   Hard and Easy Problems*. IJCAI-95, 631-637. (a constraint with a violation cost instead of a
+///   veto)
+#[derive(Debug, Clone)]
+pub struct ConstraintPenalty {
+    constraint: Arc<dyn Constraint>,
+    weight: i64,
+}
+
+impl ConstraintPenalty {
+    /// Wraps `constraint` so that each counted violation costs `weight`.
+    ///
+    /// # Complexity
+    /// Time & Space: O(1).
+    pub fn new(constraint: Arc<dyn Constraint>, weight: i64) -> Self {
+        Self { constraint, weight }
+    }
+}
+
+impl Objective for ConstraintPenalty {
+    fn name(&self) -> &str {
+        self.constraint.name()
+    }
+
+    fn scope(&self) -> &[VariableId] {
+        self.constraint.scope()
+    }
+
+    fn evaluate(&self, assignment: &HashMap<VariableId, i64>) -> i64 {
+        i64::from(self.constraint.violations(assignment))
+            .saturating_mul(self.weight)
+            .saturating_neg()
+    }
+
+    /// `0` for a non-negative weight: no completion can do better than violating nothing.
+    fn optimistic_bound(&self, _domains: &HashMap<VariableId, Domain>) -> i64 {
+        if self.weight < 0 { i64::MAX } else { 0 }
+    }
+}
+
 /// Evaluator computing global and incremental scores over a constraint graph.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScoreCalculator;
@@ -407,5 +464,25 @@ mod tests {
         let strong = HardSoftScore::tiered(0, 0, -1_000, -1_000);
         let lower = HardSoftScore::tiered(0, -1, 1_000_000, 1_000_000);
         assert!(strong > lower);
+    }
+
+    #[test]
+    fn constraint_penalty_costs_weight_per_counted_violation() {
+        use crate::constraint::{BucketRange, BucketedTask, MaximumBucketLoad};
+
+        let (a, b, c) = (VariableId(0), VariableId(1), VariableId(2));
+        let cap = MaximumBucketLoad::new(
+            [a, b, c].map(|start| BucketedTask::new(start, 1, 1)),
+            [BucketRange::new(0, 10, 0)],
+            1,
+        );
+        let penalty = ConstraintPenalty::new(Arc::new(cap), 5);
+
+        let all_in_bucket = HashMap::from([(a, 0), (b, 1), (c, 2)]);
+        let one_outside = HashMap::from([(a, 0), (b, 1), (c, 20)]);
+        assert_eq!(penalty.evaluate(&all_in_bucket), -10);
+        assert_eq!(penalty.evaluate(&one_outside), -5);
+        assert_eq!(penalty.scope(), &[a, b, c]);
+        assert_eq!(penalty.optimistic_bound(&HashMap::new()), 0);
     }
 }

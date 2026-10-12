@@ -8,6 +8,26 @@ changes.
 Versions 0.2.0 to 0.3.1 were published to crates.io before the matching changes were committed;
 the repository history records them after the fact, one commit per release.
 
+## [Unreleased]
+
+### Added
+
+- `ConstraintPenalty`: an objective that turns any `Constraint` into a preference. Each
+  violation the constraint counts (`Constraint::violations`) costs `weight` soft points, so a
+  graded constraint such as `MaximumBucketLoad` or `BucketBlockPattern` hands the search its own
+  gradient. Its scope is the constraint's, which keeps incremental scoring local.
+
+### Changed
+
+- Repair from an infeasible baseline builds chains of moves: while the LNS center breaks hard
+  constraints, the conflict search runs on the whole model without a node cap instead of on a
+  frozen neighbourhood (a blocked period in a full timetable went from 7 of 8 conflicts left to
+  none).
+- Local search scores moves graded (`Constraint::violations`), as `calculate_score` does — one
+  more clash inside an already broken constraint now costs something.
+- Local search picks the conflicted variable from `Constraint::explain` where available, and
+  collects a move's constraints, objectives and old share once per move instead of per value.
+
 ## [0.5.3] - 2026-09-24
 
 ### Changed

@@ -35,7 +35,8 @@ pub use propagation::{
     ConstraintGraph, ConstraintViolation, ModelError, PropagationEngine, ValidatedGraph,
 };
 pub use score::{
-    CategorizedObjective, HardSoftScore, Objective, ScoreCalculator, ScoreLevel, WeightedSum,
+    CategorizedObjective, ConstraintPenalty, HardSoftScore, Objective, ScoreCalculator, ScoreLevel,
+    WeightedSum,
 };
 pub use solver::{
     AbortReason, BacktrackingSolver, BranchAndBoundSolver, CancellationToken, LnsSolver,
