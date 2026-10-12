@@ -16,7 +16,6 @@ use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
 };
 use crate::{Assignment, ScoreCalculator};
-use std::collections::HashSet;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -121,20 +120,6 @@ impl LnsSolver {
         remaining
     }
 
-    /// Every variable in the scope of a constraint `assignment` breaks.
-    fn variables_of_violated_constraints(
-        graph: &ValidatedGraph,
-        assignment: &Assignment,
-    ) -> HashSet<VariableId> {
-        graph
-            .graph()
-            .constraints()
-            .iter()
-            .filter(|constraint| !constraint.is_satisfied(assignment))
-            .flat_map(|constraint| constraint.scope().iter().copied())
-            .collect()
-    }
-
     /// Whether `assignment` gives every variable a value its domain still allows — what the
     /// destroy phase needs in order to freeze the part it keeps.
     fn covers_every_variable(graph: &ValidatedGraph, assignment: &Assignment) -> bool {
@@ -206,66 +191,67 @@ impl LnsSolver {
         while check_abort(options, start_time, lns_step).is_none() {
             lns_step += 1;
 
-            // Destroy phase: Freeze (1 - destroy_fraction) variables, unassign the remaining.
-            // A search-internal derivative of an already-validated graph, so it is re-wrapped
-            // via `assume_valid` below rather than re-running `validate`.
-            let mut sub_graph = graph.graph().clone();
-            let mut sub_domains = sub_graph.domains().clone();
+            let remaining = options
+                .time_limit
+                .map(|t| t.saturating_sub(start_time.elapsed()));
 
-            // While the center breaks hard constraints, every variable of a violated one stays
-            // released: frozen to its current value, a unary violation (a new calendar block,
-            // say) empties its domain on the first propagation and fails the neighbourhood
-            // outright — so only a rotation that happened to hold every such variable at once
-            // could ever repair. Conflict-directed, on top of the rotating neighbourhood.
-            let released = if current_score.is_feasible() {
-                HashSet::new()
-            } else {
-                Self::variables_of_violated_constraints(graph, &current_assignment)
-            };
-            let destroy_offset = (lns_step as usize) % vars.len();
-            for i in 0..vars.len() {
-                let v = vars[(i + destroy_offset) % vars.len()];
-                if i >= n_destroy && !released.contains(&v) {
-                    // Freeze variable v to its current assigned value
+            // Which sub-search runs depends on what the center is.
+            //
+            // While it breaks hard constraints, the search has to *lower* the number of
+            // violations rather than demand none — an exact one demands none and reports nothing
+            // (measured: nothing in thirty seconds from 18 violations). And it gets the whole
+            // model, not a neighbourhood. Repairing a displaced activity takes a chain: it moves
+            // onto a slot whose occupant moves on in turn. A destroy step freezes most of those
+            // occupants, and frozen on a value a new restriction forbids, a variable even empties
+            // its own domain at the first propagation. Measured on a blocked period in a full
+            // timetable (`schedulr/tests/repair_after_block.rs`, timbra plan 53): with 30 % of the
+            // variables free per step, 8 displaced lessons stayed 6–7 conflicts for the whole
+            // budget; with the whole model free, all 8 moved and nothing else. The node cap goes
+            // too — a chain is a run of consecutive steps, and cutting it at 500 to start over
+            // from the old center throws it away.
+            //
+            // Once the center is feasible the question changes: every step has to *stay*
+            // feasible while improving the objective, and that is what the exact search over a
+            // destroyed neighbourhood is for.
+            let repair_outcome = if current_score.is_feasible() {
+                // Destroy phase: freeze (1 - destroy_fraction) of the variables. A
+                // search-internal derivative of an already-validated graph, so it is re-wrapped
+                // via `assume_valid` rather than re-running `validate`.
+                let mut sub_graph = graph.graph().clone();
+                let mut sub_domains = sub_graph.domains().clone();
+                let destroy_offset = (lns_step as usize) % vars.len();
+                for i in n_destroy..vars.len() {
+                    let v = vars[(i + destroy_offset) % vars.len()];
                     if let Some(&assigned_val) = current_assignment.get(&v)
                         && let Some(d) = sub_domains.get_mut(&v)
                     {
                         d.assign(assigned_val);
                     }
                 }
-            }
-
-            *sub_graph.domains_mut() = sub_domains;
-            let sub_graph = ValidatedGraph::assume_valid(sub_graph);
-
-            // Repair phase: Solve sub-problem via Backtracking solver
-            let repair_options = SolverOptions {
-                time_limit: options
-                    .time_limit
-                    .map(|t| t.saturating_sub(start_time.elapsed())),
-                max_nodes: Some(500),
-                cancellation_token: options.cancellation_token.clone(),
-                seed: options.seed,
-                shared_incumbent: options.shared_incumbent.clone(),
-            };
-
-            // Which sub-search repairs depends on what the center is.
-            //
-            // While it breaks hard constraints, the sub-search has to *lower* the number of
-            // violations rather than demand none. An exact one demands none, so it reports
-            // nothing unless the relaxation happens to contain every violated constraint whole —
-            // and the constraints that matter here span dozens of variables, so it never does.
-            // Measured: with the center at 18 violations, an exact repair returned nothing in
-            // thirty seconds, whatever neighborhood it was given. That is the wall this work
-            // package exists to remove.
-            //
-            // Once the center is feasible the question changes: every step has to *stay*
-            // feasible while improving the objective, and that is what the exact search is for.
-            let repair_outcome = if current_score.is_feasible() {
-                self.repair_solver.solve(&sub_graph, &repair_options)
+                *sub_graph.domains_mut() = sub_domains;
+                let sub_graph = ValidatedGraph::assume_valid(sub_graph);
+                self.repair_solver.solve(
+                    &sub_graph,
+                    &SolverOptions {
+                        time_limit: remaining,
+                        max_nodes: Some(500),
+                        cancellation_token: options.cancellation_token.clone(),
+                        seed: options.seed,
+                        shared_incumbent: options.shared_incumbent.clone(),
+                    },
+                )
             } else {
-                self.conflict_repair
-                    .repair_from(&sub_graph, &current_assignment, &repair_options)
+                self.conflict_repair.repair_from(
+                    graph,
+                    &current_assignment,
+                    &SolverOptions {
+                        time_limit: remaining,
+                        max_nodes: None,
+                        cancellation_token: options.cancellation_token.clone(),
+                        seed: options.seed,
+                        shared_incumbent: options.shared_incumbent.clone(),
+                    },
+                )
             };
             // `reached()`, not `solution`: a repair that merely got closer is the whole point,
             // and it arrives as the fallback rather than as a result (plan 51, C2).

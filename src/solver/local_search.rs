@@ -14,17 +14,19 @@
 //! - Glover, F., & Laguna, M. (1997). *Tabu Search*. Kluwer Academic Publishers.
 //! - Aarts, E., & Lenstra, J. K. (1997). *Local Search in Combinatorial Optimization*. Princeton University Press.
 
+use crate::constraint::Constraint;
 use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
 use crate::propagation::engine::PropagationEngine;
 use crate::propagation::graph::{ConstraintId, ValidatedGraph};
-use crate::score::{HardSoftScore, ScoreCalculator};
+use crate::score::{HardSoftScore, Objective, ScoreCalculator, ScoreLevel};
 use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
 };
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// How many violated constraints one repair step draws from before committing to a move.
@@ -354,10 +356,9 @@ impl LocalSearchSolver {
             // so the full scan still gets its turn before the search gives up.
             let mut step: Option<(VariableId, i64, HardSoftScore)> = None;
             for _ in 0..CONFLICT_SAMPLES {
-                let Some(var_id) = violated
-                    .pick(&mut rng)
-                    .and_then(|constraint| self.conflicted_variable(graph, constraint, &mut rng))
-                else {
+                let Some(var_id) = violated.pick(&mut rng).and_then(|constraint| {
+                    self.conflicted_variable(graph, constraint, &current_assignment, &mut rng)
+                }) else {
                     break;
                 };
                 let candidate = self.best_value_for(
@@ -615,9 +616,20 @@ impl LocalSearchSolver {
         &self,
         graph: &ValidatedGraph,
         constraint: ConstraintId,
+        assignment: &HashMap<VariableId, i64>,
         rng: &mut Lcg,
     ) -> Option<VariableId> {
-        let scope = graph.get_constraint(constraint)?.scope();
+        let constraint = graph.get_constraint(constraint)?;
+        // The variables the violation is actually about, where the constraint can name them. A
+        // resource or a person carries dozens of activities, and a draw from the whole scope
+        // mostly moves one that has nothing to do with the clash — the step is spent, the
+        // conflict stays. Only without an explanation does the whole scope stand in.
+        if let Some(explanation) = constraint.explain(assignment)
+            && !explanation.involved.is_empty()
+        {
+            return Some(explanation.involved[rng.index(explanation.involved.len())]);
+        }
+        let scope = constraint.scope();
         (!scope.is_empty()).then(|| scope[rng.index(scope.len())])
     }
 
@@ -641,17 +653,21 @@ impl LocalSearchSolver {
         let mut best: Option<(i64, HardSoftScore)> = None;
         let mut tied = 0usize;
 
+        // What a move of this variable touches is the same for every candidate value, and so is
+        // its share of the score before the move: both are taken once here, not once per value.
+        // Measured on a timetable repair, the per-value scan over every objective and the
+        // re-evaluation of the unchanged old value were more than half of each step.
+        let touched = MoveScope::of(graph, var_id);
+        let before = touched.share(assignment);
+
         for candidate in domains.get(&var_id)?.values() {
             if candidate == current_value {
                 continue;
             }
-            let score = self.score_calculator.score_after_change(
-                graph,
-                assignment,
-                var_id,
-                candidate,
-                current_score,
-            );
+            assignment.insert(var_id, candidate);
+            let after = touched.share(assignment);
+            assignment.insert(var_id, current_value);
+            let score = before.applied_to(current_score, after);
             // Aspiration criterion: a tabu move is allowed when it beats the overall best.
             if tabu_list.contains(&(var_id, candidate)) && score <= best_score {
                 continue;
@@ -722,6 +738,84 @@ impl LocalSearchSolver {
             }
         }
         best
+    }
+}
+
+/// The constraints and objectives one variable's move can change, collected once per move.
+struct MoveScope<'g> {
+    constraints: Vec<&'g Arc<dyn Constraint>>,
+    objectives: Vec<&'g Arc<dyn Objective>>,
+}
+
+/// One move scope's part of the score: constraint violations and objective totals per level.
+#[derive(Clone, Copy)]
+struct Share {
+    violations: i64,
+    strong: i64,
+    medium: i64,
+    weak: i64,
+}
+
+impl<'g> MoveScope<'g> {
+    fn of(graph: &'g ValidatedGraph, var_id: VariableId) -> Self {
+        Self {
+            constraints: graph
+                .constraints_for_variable(var_id)
+                .iter()
+                .filter_map(|&cid| graph.get_constraint(cid))
+                .collect(),
+            objectives: graph
+                .objectives()
+                .iter()
+                .filter(|objective| objective.scope().contains(&var_id))
+                .collect(),
+        }
+    }
+
+    fn share(&self, assignment: &HashMap<VariableId, i64>) -> Share {
+        let mut share = Share {
+            // Graded, as in `ScoreCalculator::calculate_score`: one more clash inside a constraint
+            // that is already broken has to cost something, or the search stacks clashes there.
+            violations: self
+                .constraints
+                .iter()
+                .map(|constraint| i64::from(constraint.violations(assignment)))
+                .sum(),
+            strong: 0,
+            medium: 0,
+            weak: 0,
+        };
+        for objective in &self.objectives {
+            let value = objective.evaluate(assignment);
+            let level = match objective.level() {
+                ScoreLevel::Strong => &mut share.strong,
+                ScoreLevel::Medium => &mut share.medium,
+                ScoreLevel::Weak => &mut share.weak,
+            };
+            *level = level.saturating_add(value);
+        }
+        share
+    }
+}
+
+impl Share {
+    /// `current` with this share replaced by `after`: the incremental form of
+    /// [`ScoreCalculator::calculate_score`], graded the same way.
+    fn applied_to(self, current: HardSoftScore, after: Share) -> HardSoftScore {
+        HardSoftScore::tiered(
+            current
+                .hard
+                .saturating_add(self.violations.saturating_sub(after.violations)),
+            current
+                .strong
+                .saturating_add(after.strong.saturating_sub(self.strong)),
+            current
+                .medium
+                .saturating_add(after.medium.saturating_sub(self.medium)),
+            current
+                .weak
+                .saturating_add(after.weak.saturating_sub(self.weak)),
+        )
     }
 }
 
