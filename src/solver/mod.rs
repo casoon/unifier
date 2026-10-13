@@ -20,7 +20,8 @@ pub use shared_incumbent::SharedIncumbent;
 
 use crate::model::domain::{Domain, TrailedDomains};
 use crate::model::variable::VariableId;
-use crate::propagation::graph::{ConstraintGraph, ConstraintId};
+use crate::propagation::engine::ConstraintWeights;
+use crate::propagation::graph::ConstraintGraph;
 use crate::score::HardSoftScore;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -269,7 +270,7 @@ pub(crate) fn select_dom_wdeg_variable(
     graph: &ConstraintGraph,
     domains: &HashMap<VariableId, Domain>,
     assignment: &HashMap<VariableId, i64>,
-    weights: &HashMap<ConstraintId, u32>,
+    weights: &ConstraintWeights,
 ) -> Option<VariableId> {
     let mut best_var = None;
     let mut best_ratio = f64::INFINITY;
@@ -294,7 +295,7 @@ pub(crate) fn select_dom_wdeg_variable(
                     .iter()
                     .any(|&v| v != var_id && !assignment.contains_key(&v));
                 if connects_unassigned_other {
-                    weighted_degree += u64::from(*weights.get(&cid).unwrap_or(&1));
+                    weighted_degree += u64::from(weights.get(cid));
                 }
             }
         }

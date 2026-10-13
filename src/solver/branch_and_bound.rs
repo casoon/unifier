@@ -10,8 +10,8 @@
 use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
-use crate::propagation::engine::PropagationEngine;
-use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
+use crate::propagation::engine::{ConstraintWeights, PropagationEngine};
+use crate::propagation::graph::{ConstraintGraph, ValidatedGraph};
 use crate::score::{HardSoftScore, ScoreCalculator};
 use crate::solver::{
     AbortReason, SearchFrame, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
@@ -35,7 +35,7 @@ struct SearchState<'a> {
     best_score: &'a mut Option<HardSoftScore>,
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
     /// `select_dom_wdeg_variable`). Updated by [`PropagationEngine::propagate`].
-    weights: &'a mut HashMap<ConstraintId, u32>,
+    weights: &'a mut ConstraintWeights,
     /// The deepest partial assignment this descent reached (plan 51, C6). Only of interest when
     /// no feasible solution turns up: it is what the run has to show for its time.
     deepest: &'a mut HashMap<VariableId, i64>,
@@ -76,7 +76,7 @@ impl BranchAndBoundSolver {
         let mut assignment = HashMap::new();
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
-        let mut weights = HashMap::new();
+        let mut weights = ConstraintWeights::default();
 
         let mut best_solution = None;
         let mut best_score = None;

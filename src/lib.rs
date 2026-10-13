@@ -32,7 +32,8 @@ pub use model::{
     Activity, Domain, Group, Interval, Resource, TrailedDomains, Variable, VariableId,
 };
 pub use propagation::{
-    ConstraintGraph, ConstraintViolation, ModelError, PropagationEngine, ValidatedGraph,
+    ConstraintGraph, ConstraintViolation, ConstraintWeights, ModelError, PropagationEngine,
+    ValidatedGraph,
 };
 pub use score::{
     CategorizedObjective, ConstraintPenalty, HardSoftScore, Objective, ScoreCalculator, ScoreLevel,

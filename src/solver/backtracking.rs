@@ -10,7 +10,7 @@
 use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::model::variable::VariableId;
-use crate::propagation::engine::PropagationEngine;
+use crate::propagation::engine::{ConstraintWeights, PropagationEngine};
 use crate::propagation::graph::{ConstraintGraph, ConstraintId, ValidatedGraph};
 use crate::score::ScoreCalculator;
 use crate::solver::{
@@ -62,7 +62,7 @@ struct SearchState<'a> {
     nodes_count: &'a mut u64,
     /// Per-constraint conflict counts driving the `dom/wdeg` heuristic (see
     /// `select_dom_wdeg_variable`). Updated by [`PropagationEngine::propagate`].
-    weights: &'a mut HashMap<ConstraintId, u32>,
+    weights: &'a mut ConstraintWeights,
     /// Node count at which the current attempt gives up so a restart can re-dive under the
     /// weights it just learned.
     restart_at: u64,
@@ -101,7 +101,7 @@ impl BacktrackingSolver {
     pub fn solve(&self, graph: &ValidatedGraph, options: &SolverOptions) -> SolveOutcome {
         let start_time = Instant::now();
         let mut nodes_count = 0u64;
-        let mut weights = HashMap::new();
+        let mut weights = ConstraintWeights::default();
         let mut deepest: HashMap<VariableId, i64> = HashMap::new();
 
         for attempt in 0.. {
@@ -278,7 +278,7 @@ impl BacktrackingSolver {
                 // made unsatisfiable (see `tests/unpropagated_constraint.rs`).
                 match first_unsatisfiable(graph, domains, assignment, var_id) {
                     // Counted like a propagation conflict, so `dom/wdeg` learns from it too.
-                    Some(constraint) => *state.weights.entry(constraint).or_insert(1) += 1,
+                    Some(constraint) => state.weights.bump(constraint),
                     None => descending = true,
                 }
             }

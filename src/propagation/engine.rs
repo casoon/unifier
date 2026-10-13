@@ -15,9 +15,38 @@
 use crate::constraint::PropagationResult;
 use crate::model::domain::TrailedDomains;
 use crate::propagation::graph::{ConstraintGraph, ConstraintId};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 /// Propagation engine executing AC-3 domain filtering across a [`ConstraintGraph`].
+/// The `dom/wdeg` weight of every constraint: how often it failed a search node, starting at 1.
+///
+/// Indexed, not hashed: `ConstraintId` is a dense index into `constraints()`, and the weights are
+/// read for every constraint of every unassigned variable at every search node — measured on a
+/// timetable, hashing them was a large share of the tree search's time (timbra plan 53).
+#[derive(Debug, Clone, Default)]
+pub struct ConstraintWeights {
+    weights: Vec<u32>,
+}
+
+impl ConstraintWeights {
+    /// The weight of `constraint`; 1 until it first fails.
+    pub fn get(&self, constraint: ConstraintId) -> u32 {
+        self.weights
+            .get(constraint.0 as usize)
+            .copied()
+            .unwrap_or(1)
+    }
+
+    /// Counts one more failure of `constraint`.
+    pub fn bump(&mut self, constraint: ConstraintId) {
+        let index = constraint.0 as usize;
+        if index >= self.weights.len() {
+            self.weights.resize(index + 1, 1);
+        }
+        self.weights[index] += 1;
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PropagationEngine;
 
@@ -64,7 +93,7 @@ impl PropagationEngine {
         &self,
         graph: &ConstraintGraph,
         domains: &mut TrailedDomains,
-        weights: Option<&mut HashMap<ConstraintId, u32>>,
+        weights: Option<&mut ConstraintWeights>,
     ) -> PropagationResult {
         self.propagate_from(
             graph,
@@ -98,7 +127,7 @@ impl PropagationEngine {
         graph: &ConstraintGraph,
         domains: &mut TrailedDomains,
         seeds: impl IntoIterator<Item = ConstraintId>,
-        mut weights: Option<&mut HashMap<ConstraintId, u32>>,
+        mut weights: Option<&mut ConstraintWeights>,
     ) -> PropagationResult {
         // Indexed, not hashed: `ConstraintId` is a dense index into `constraints()`, so hashing
         // one per enqueue is pure overhead on the hottest path the solvers have.
@@ -124,7 +153,7 @@ impl PropagationEngine {
                 match constraint.propagate(domains) {
                     PropagationResult::Conflict => {
                         if let Some(w) = weights.as_deref_mut() {
-                            *w.entry(cid).or_insert(1) += 1;
+                            w.bump(cid);
                         }
                         return PropagationResult::Conflict;
                     }

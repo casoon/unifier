@@ -3,5 +3,5 @@
 pub mod engine;
 pub mod graph;
 
-pub use engine::PropagationEngine;
+pub use engine::{ConstraintWeights, PropagationEngine};
 pub use graph::{ConstraintGraph, ConstraintId, ConstraintViolation, ModelError, ValidatedGraph};

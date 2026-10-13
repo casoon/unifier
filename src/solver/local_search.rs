@@ -103,25 +103,36 @@ impl Lcg {
 #[derive(Debug, Default)]
 struct ViolationSet {
     entries: Vec<ConstraintId>,
-    positions: HashMap<ConstraintId, usize>,
+    /// Indexed by the dense `ConstraintId`, not hashed — the set changes after every step.
+    positions: Vec<Option<usize>>,
 }
 
 impl ViolationSet {
+    fn position_mut(&mut self, constraint: ConstraintId) -> &mut Option<usize> {
+        let index = constraint.0 as usize;
+        if index >= self.positions.len() {
+            self.positions.resize(index + 1, None);
+        }
+        &mut self.positions[index]
+    }
+
     fn insert(&mut self, constraint: ConstraintId) {
-        if self.positions.contains_key(&constraint) {
+        let len = self.entries.len();
+        let position = self.position_mut(constraint);
+        if position.is_some() {
             return;
         }
-        self.positions.insert(constraint, self.entries.len());
+        *position = Some(len);
         self.entries.push(constraint);
     }
 
     fn remove(&mut self, constraint: ConstraintId) {
-        let Some(index) = self.positions.remove(&constraint) else {
+        let Some(index) = self.position_mut(constraint).take() else {
             return;
         };
         self.entries.swap_remove(index);
         if let Some(&moved) = self.entries.get(index) {
-            self.positions.insert(moved, index);
+            *self.position_mut(moved) = Some(index);
         }
     }
 
