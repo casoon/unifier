@@ -262,7 +262,7 @@ impl LnsSolver {
             // Once the center is feasible the question changes: every step has to *stay*
             // feasible while improving the objective, and that is what the exact search over a
             // destroyed neighbourhood is for.
-            let repair_outcome = if current_score.is_feasible() && lns_step % 2 == 0 {
+            let repair_outcome = if current_score.is_feasible() && lns_step.is_multiple_of(2) {
                 // Every other step: a small neighbourhood of related variables, re-optimised
                 // exactly. A slice of the variables in id order rarely holds two that have to
                 // change together — two activities trading their rooms — and a first-solution
