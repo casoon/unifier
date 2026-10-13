@@ -11,6 +11,7 @@
 use crate::model::variable::VariableId;
 use crate::propagation::graph::ValidatedGraph;
 use crate::solver::backtracking::BacktrackingSolver;
+use crate::solver::branch_and_bound::BranchAndBoundSolver;
 use crate::solver::local_search::LocalSearchSolver;
 use crate::solver::{
     AbortReason, SearchStatistics, Solution, SolveOutcome, SolverOptions, check_abort,
@@ -28,6 +29,12 @@ const CENTER_WAIT: Duration = Duration::from_millis(250);
 /// The largest share of a run that may go into waiting for one.
 const CENTER_WAIT_DIVISOR: u32 = 10;
 
+/// Variables in a related neighbourhood.
+const RELATED_SIZE: usize = 12;
+
+/// Nodes the exact search may spend on one related neighbourhood.
+const RELATED_NODES: u64 = 2_000;
+
 /// How often that wait looks.
 const CENTER_POLL: Duration = Duration::from_millis(2);
 
@@ -38,6 +45,8 @@ pub struct LnsSolver {
     /// The sub-search used while the center still breaks hard constraints — see the repair phase
     /// in [`LnsSolver::improve_from`] for why an exact one cannot serve there.
     conflict_repair: LocalSearchSolver,
+    /// The exact sub-search over a related neighbourhood once the center is feasible.
+    optimising_repair: BranchAndBoundSolver,
     destroy_fraction: f64,
 }
 
@@ -46,6 +55,7 @@ impl Default for LnsSolver {
         Self {
             repair_solver: BacktrackingSolver::new(),
             conflict_repair: LocalSearchSolver::default(),
+            optimising_repair: BranchAndBoundSolver::new(),
             destroy_fraction: 0.3,
         }
     }
@@ -57,6 +67,7 @@ impl LnsSolver {
         Self {
             repair_solver: BacktrackingSolver::new(),
             conflict_repair: LocalSearchSolver::default(),
+            optimising_repair: BranchAndBoundSolver::new(),
             destroy_fraction: destroy_fraction.clamp(0.1, 0.9),
         }
     }
@@ -112,6 +123,42 @@ impl LnsSolver {
 
     /// The options with the time limit reduced by what has already been spent, so that a phase
     /// handed the "rest" of a run cannot start a full budget over again.
+    /// A seed variable and the variables that share constraints with it, breadth first and
+    /// tightest constraint first, up to [`RELATED_SIZE`]. The seed walks through the variables
+    /// with the step, so every one of them is a seed in turn.
+    fn related_neighbourhood(
+        graph: &ValidatedGraph,
+        sorted_vars: &[VariableId],
+        step: u64,
+    ) -> Vec<VariableId> {
+        // A prime stride visits every variable before repeating, without walking neighbours.
+        let seed = sorted_vars[(step as usize).wrapping_mul(7_919) % sorted_vars.len()];
+        let mut related = vec![seed];
+        let mut next = 0;
+        while next < related.len() && related.len() < RELATED_SIZE {
+            let var = related[next];
+            next += 1;
+            let mut constraints: Vec<&[VariableId]> = graph
+                .constraints_for_variable(var)
+                .iter()
+                .filter_map(|id| graph.get_constraint(*id))
+                .map(|constraint| constraint.scope())
+                .collect();
+            constraints.sort_by_key(|scope| scope.len());
+            for scope in constraints {
+                for other in scope {
+                    if related.len() == RELATED_SIZE {
+                        break;
+                    }
+                    if !related.contains(other) {
+                        related.push(*other);
+                    }
+                }
+            }
+        }
+        related
+    }
+
     fn remaining(options: &SolverOptions, start_time: Instant) -> SolverOptions {
         let mut remaining = options.clone();
         remaining.time_limit = options
@@ -175,6 +222,8 @@ impl LnsSolver {
         let mut lns_step = 0u64;
 
         let vars: Vec<VariableId> = graph.variables().keys().copied().collect();
+        let mut sorted_vars = vars.clone();
+        sorted_vars.sort_unstable();
         if vars.is_empty() {
             // No variables to destroy/repair; the initial solution is already optimal.
             let statistics = SearchStatistics {
@@ -213,7 +262,36 @@ impl LnsSolver {
             // Once the center is feasible the question changes: every step has to *stay*
             // feasible while improving the objective, and that is what the exact search over a
             // destroyed neighbourhood is for.
-            let repair_outcome = if current_score.is_feasible() {
+            let repair_outcome = if current_score.is_feasible() && lns_step % 2 == 0 {
+                // Every other step: a small neighbourhood of related variables, re-optimised
+                // exactly. A slice of the variables in id order rarely holds two that have to
+                // change together — two activities trading their rooms — and a first-solution
+                // search over it ignores the objective, so it only ever stumbles on an
+                // improvement.
+                let related = Self::related_neighbourhood(graph, &sorted_vars, lns_step);
+                let mut sub_graph = graph.graph().clone();
+                let mut sub_domains = sub_graph.domains().clone();
+                for v in &sorted_vars {
+                    if !related.contains(v)
+                        && let Some(&assigned_val) = current_assignment.get(v)
+                        && let Some(d) = sub_domains.get_mut(v)
+                    {
+                        d.assign(assigned_val);
+                    }
+                }
+                *sub_graph.domains_mut() = sub_domains;
+                let sub_graph = ValidatedGraph::assume_valid(sub_graph);
+                self.optimising_repair.solve(
+                    &sub_graph,
+                    &SolverOptions {
+                        time_limit: remaining,
+                        max_nodes: Some(RELATED_NODES),
+                        cancellation_token: options.cancellation_token.clone(),
+                        seed: options.seed,
+                        shared_incumbent: None,
+                    },
+                )
+            } else if current_score.is_feasible() {
                 // Destroy phase: freeze (1 - destroy_fraction) of the variables. A
                 // search-internal derivative of an already-validated graph, so it is re-wrapped
                 // via `assume_valid` rather than re-running `validate`.
