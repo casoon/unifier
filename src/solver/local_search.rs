@@ -536,13 +536,15 @@ impl LocalSearchSolver {
             let values = domains.get(&var_id)?.values();
             let (&first, rest) = values.split_first()?;
 
-            assignment.insert(var_id, first);
+            // Je Variable einmal vorbereitet, je Wert nur noch nachgeschlagen: eine Ressource
+            // trägt jeden Termin, der sie nutzen könnte, und sie je Wert ganz neu zu prüfen war
+            // auf dem Gymnasium (829 Termine) fast die ganze Konstruktionszeit (timbra Plan 53).
+            let touched = TouchedConstraint::of(graph, var_id, &assignment);
             let mut best_value = first;
-            let mut fewest = self.conflicts_at(graph, &assignment, var_id);
+            let mut fewest = Self::conflicts_with(&touched, &mut assignment, var_id, first);
             let mut tied = 1usize;
             for &value in rest {
-                assignment.insert(var_id, value);
-                let conflicts = self.conflicts_at(graph, &assignment, var_id);
+                let conflicts = Self::conflicts_with(&touched, &mut assignment, var_id, value);
                 if conflicts < fewest {
                     fewest = conflicts;
                     best_value = value;
@@ -595,18 +597,21 @@ impl LocalSearchSolver {
         Some((domains, assignment))
     }
 
-    /// How many of `var_id`'s constraints `assignment` violates.
-    fn conflicts_at(
-        &self,
-        graph: &ValidatedGraph,
-        assignment: &HashMap<VariableId, i64>,
+    /// How many of the `touched` constraints `var_id` at `value` violates; leaves `var_id` at
+    /// `value` in `assignment`.
+    fn conflicts_with(
+        touched: &[TouchedConstraint<'_>],
+        assignment: &mut HashMap<VariableId, i64>,
         var_id: VariableId,
+        value: i64,
     ) -> usize {
-        graph
-            .constraints_for_variable(var_id)
+        assignment.insert(var_id, value);
+        touched
             .iter()
-            .filter_map(|&cid| graph.get_constraint(cid))
-            .filter(|constraint| !constraint.is_satisfied(assignment))
+            .filter(|touched| match &touched.by_value {
+                Some(by_value) => by_value(value) > 0,
+                None => !touched.constraint.is_satisfied(assignment),
+            })
             .count()
     }
 
@@ -758,6 +763,25 @@ struct TouchedConstraint<'g> {
     by_value: Option<Box<dyn Fn(i64) -> u32 + 'g>>,
 }
 
+impl<'g> TouchedConstraint<'g> {
+    /// The constraints on `var_id`, each prepared for moves of it where it can be.
+    fn of(
+        graph: &'g ValidatedGraph,
+        var_id: VariableId,
+        assignment: &HashMap<VariableId, i64>,
+    ) -> Vec<Self> {
+        graph
+            .constraints_for_variable(var_id)
+            .iter()
+            .filter_map(|&cid| graph.get_constraint(cid))
+            .map(|constraint| TouchedConstraint {
+                constraint,
+                by_value: constraint.move_violations(assignment, var_id),
+            })
+            .collect()
+    }
+}
+
 impl<'g> MoveScope<'g> {
     fn of(
         graph: &'g ValidatedGraph,
@@ -765,15 +789,7 @@ impl<'g> MoveScope<'g> {
         assignment: &HashMap<VariableId, i64>,
     ) -> Self {
         Self {
-            constraints: graph
-                .constraints_for_variable(var_id)
-                .iter()
-                .filter_map(|&cid| graph.get_constraint(cid))
-                .map(|constraint| TouchedConstraint {
-                    constraint,
-                    by_value: constraint.move_violations(assignment, var_id),
-                })
-                .collect(),
+            constraints: TouchedConstraint::of(graph, var_id, assignment),
             objectives: graph
                 .objectives()
                 .iter()
