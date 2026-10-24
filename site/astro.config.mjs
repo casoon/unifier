@@ -13,12 +13,11 @@ export default defineConfig({
         'Constraint satisfaction and optimization (CSP/COP) modelling and solver framework for Rust.',
       tagline: 'Constraint solver framework for Rust',
       repo: 'casoon/unifier',
-      version: '0.6.0',
       license: 'MIT',
       branch: 'master',
       packages: [
         { label: 'crates.io', href: 'https://crates.io/crates/unifier' },
-        { label: 'docs.rs', href: 'https://docs.rs/unifier/0.6.0/unifier/' },
+        { label: 'docs.rs', href: 'https://docs.rs/unifier' },
       ],
       docsGroups: {
         'getting-started': 'Getting started',
