@@ -10,6 +10,13 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-24
+
+### Breaking
+
+- unifier builds on `pathwise` 0.3 instead of 0.2. `CancellationToken` is re-exported from
+  `pathwise`, so code that names the 0.2 type needs `pathwise` 0.3 as well.
+
 ### Added
 
 - `ConstraintPenalty`: an objective that turns any `Constraint` into a preference. Each
