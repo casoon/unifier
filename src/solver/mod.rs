@@ -1,6 +1,6 @@
 //! Constraint satisfaction and optimization solvers.
 //!
-//! Provides Backtracking with MRV heuristics, Branch & Bound, Local Search, LNS, and Parallel Portfolio search.
+//! Provides Backtracking with dom/wdeg ordering, Branch & Bound, Local Search, LNS, and Parallel Portfolio search.
 
 pub mod backtracking;
 pub mod branch_and_bound;

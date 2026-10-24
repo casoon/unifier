@@ -72,7 +72,7 @@ for a worse higher level.
 | `add_maximize(vars, weight)` | `+ weight × sum(vars)` |
 | `add_minimize(vars, weight)` | `− weight × sum(vars)` |
 | `add_tardiness_minimize(ends_and_deadlines, weight)` | `− weight × Σ max(0, end − deadline)`; returns the tardiness variables |
-| `add_objective(objective)` | any type implementing `Objective` |
+| `add_objective(objective)` | any type implementing `Objective`, e.g. `ConstraintPenalty`, which costs `weight` per violation of any `Constraint` |
 | `add_scored_objective(category, level, objective)` | `objective` on the given `ScoreLevel`, under a category name |
 
 Objectives land on the `weak` level unless they say otherwise: `Objective::level()` defaults to

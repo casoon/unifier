@@ -10,7 +10,7 @@
 //! constraint   — equal, not_equal, all_different, no_overlap, cumulative
 //! propagation  — constraint graph, AC-3 propagator engine
 //! score        — hard/soft priority scoring, incremental updates
-//! solver       — backtracking (MRV), branch_and_bound
+//! solver       — backtracking (dom/wdeg), branch_and_bound
 //! dsl          — problem-building surface API
 //! ```
 

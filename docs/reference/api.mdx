@@ -16,7 +16,7 @@ constraint model (`model`, `constraint`, `propagation`, `score`) and the solver 
 | `model` | `Variable`, `VariableId`, `Domain`, `Interval`, `Activity`, `Resource`, `Group`, `TrailedDomains` | Variables, domains and scheduling data |
 | `constraint` | `Constraint`, `AllDifferent`, `NoOverlap`, `Cumulative`, `Precedence`, … | The constraint trait and the built-in constraints |
 | `propagation` | `ConstraintGraph`, `ValidatedGraph`, `PropagationEngine`, `ModelError`, `ConstraintViolation` | The constraint graph, validation and AC-3 propagation |
-| `score` | `HardSoftScore`, `ScoreLevel`, `Objective`, `CategorizedObjective`, `WeightedSum`, `ScoreCalculator` | Hard/soft scoring on lexicographic levels, and objectives |
+| `score` | `HardSoftScore`, `ScoreLevel`, `Objective`, `CategorizedObjective`, `WeightedSum`, `ConstraintPenalty`, `ScoreCalculator` | Hard/soft scoring on lexicographic levels, and objectives |
 | `solver` | `BacktrackingSolver`, `BranchAndBoundSolver`, `LocalSearchSolver`, `LnsSolver`, `ParallelSolver`, `SolverOptions`, `SolveOutcome`, `SolveStatus` | Search strategies and their results |
 
 Every public function and constraint documents its complexity and the paper or textbook it is

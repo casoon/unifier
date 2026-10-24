@@ -32,7 +32,7 @@ models:
 - constraint propagation, with generalized arc consistency for `AllDifferent` (Régin's
   matching and SCC algorithm), overload detection for `Cumulative` and `NoOverlap`,
   edge-finding for `NoOverlap`, and AC-3 otherwise;
-- `dom/wdeg` and MRV variable ordering;
+- `dom/wdeg` variable ordering with least-constraining values first;
 - reversible domains (checkpoint and undo) instead of cloning the domains at every search node;
 - Branch & Bound with its own optimistic-bound pruning over hard/soft scores.
 

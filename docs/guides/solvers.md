@@ -16,7 +16,7 @@ let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default(
 | Solver | Kind | Can prove | Use it for |
 | --- | --- | --- | --- |
 | `BacktrackingSolver::new()` | complete tree search with propagation and `dom/wdeg` ordering | feasibility, infeasibility | pure CSP: any valid assignment, or proof that none exists |
-| `BranchAndBoundSolver::new()` | complete tree search with propagation, MRV ordering and optimistic-bound pruning | optimality, infeasibility | COP when the optimum should be proven |
+| `BranchAndBoundSolver::new()` | complete tree search with propagation, `dom/wdeg` ordering and optimistic-bound pruning | optimality, infeasibility | COP when the optimum should be proven |
 | `LocalSearchSolver::new(tabu_tenure)` | tabu search over value changes and swaps | – | a good solution quickly on large models |
 | `LnsSolver::new(destroy_fraction)` | large neighbourhood search: relax part of the assignment, repair it by backtracking | – | improving an existing solution on large models |
 | `ParallelSolver::new()` | portfolio of the four above, one thread each | what its workers prove | not knowing in advance which strategy fits |

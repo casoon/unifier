@@ -12,7 +12,7 @@ Or in `Cargo.toml`:
 
 ```toml
 [dependencies]
-unifier = "0.3"
+unifier = "0.6"
 ```
 
 ## Requirements
@@ -21,13 +21,13 @@ unifier = "0.3"
 | --- | --- |
 | Rust | `1.87` or newer (`rust-version` in `Cargo.toml`) |
 | Edition | 2024 |
-| Runtime dependencies | [`pathwise`](https://crates.io/crates/pathwise) `0.2` |
+| Runtime dependencies | [`pathwise`](https://crates.io/crates/pathwise) `0.3` |
 
 ## Build from source
 
 The repository's `Cargo.toml` names `pathwise` with a version and a relative path
-(`version = "0.2.0", path = "../pathwise"`), so local development can use a pathwise checkout
-next to unifier. That checkout has to provide pathwise 0.2. Without one, remove the `path` part
+(`version = "0.3.0", path = "../pathwise"`), so local development can use a pathwise checkout
+next to unifier. That checkout has to provide pathwise 0.3. Without one, remove the `path` part
 of the dependency and Cargo uses the published pathwise from crates.io, as the CI workflow does:
 
 ```sh

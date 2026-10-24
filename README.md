@@ -10,7 +10,7 @@ integration currently goes).
 
 ## Status
 
-Early (`0.3.x`), published to crates.io; see [CHANGELOG.md](CHANGELOG.md). The core model, constraint
+Early (`0.x`), published to crates.io; see [CHANGELOG.md](CHANGELOG.md). The core model, constraint
 propagation, global constraints, hard/soft scoring with weighted
 objectives, fallible model validation (`ConstraintGraph::validate` /
 `ModelBuilder::build`), and five solver strategies (Backtracking,
@@ -104,7 +104,7 @@ and runtime (incremental scoring, cancellation).
 
 ```toml
 [dependencies]
-unifier = "0.3"
+unifier = "0.6"
 ```
 
 ## License
