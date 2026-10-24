@@ -11,6 +11,7 @@ export default defineConfig({
       name: 'unifier',
       description:
         'Constraint satisfaction and optimization (CSP/COP) modelling and solver framework for Rust.',
+      tagline: 'Constraint solver framework for Rust',
       repo: 'casoon/unifier',
       version: '0.3.2',
       license: 'MIT',
