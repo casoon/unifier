@@ -37,17 +37,18 @@ use std::time::Instant;
 /// not depend on how big the model is.
 const CONFLICT_SAMPLES: usize = 4;
 
-/// Wie viele zuletzt gesetzte Variablen die Konstruktion zurücknimmt, wenn eine Variable keinen
-/// konfliktfreien Wert mehr hat. Klein, weil der Konflikt fast immer von einem der letzten
-/// Schritte kommt — und weil breites Zurücknehmen in eine vollständige Suche übergeht, die es
-/// hier gerade nicht sein soll.
+/// How many of the most recently set variables the construction retracts when a variable has no
+/// conflict-free value left. Small, because the conflict almost always comes from one of the last
+/// few steps — and because retracting broadly turns into a complete search, which is exactly
+/// what this is not supposed to be.
 const RETRACTION_WIDTH: usize = 8;
 
-/// Wie viele Anläufe die Konstruktion nimmt, bevor der beste davon in die Reparatur geht.
+/// How many attempts the construction makes before the best of them goes into repair.
 const CONSTRUCTION_ATTEMPTS: u32 = 8;
 
-/// Obergrenze fürs Zurücknehmen, je Variable. Ohne sie kann sich die Konstruktion im Kreis
-/// drehen; mit ihr endet sie immer — notfalls mit Konflikten, die die Reparatur danach aufräumt.
+/// Upper bound on retractions, per variable. Without it the construction can go round in
+/// circles; with it, it always terminates — if need be with conflicts that repair cleans up
+/// afterwards.
 const RETRACTION_BUDGET_PER_VARIABLE: usize = 4;
 
 /// Deterministic linear congruential generator for tie-breaking, seeded from
@@ -199,10 +200,10 @@ impl LocalSearchSolver {
             );
         }
 
-        // Mehrere Anläufe, der beste zählt. Die Konstruktion rät an den Gleichständen, und wie
-        // gut sie ausgeht, hängt daran spürbar: über verschiedene Würfel schwankt das Ergebnis
-        // zwischen „ein paar Verstöße" und „keiner". Ein Anlauf kostet Millisekunden, ein
-        // verpasster konfliktfreier Start die ganze Reparatur danach.
+        // Several attempts, the best one counts. The construction guesses at ties, and how well
+        // it turns out depends noticeably on that: across different seeds the result varies
+        // between "a few violations" and "none". An attempt costs milliseconds; a missed
+        // conflict-free start costs the entire repair afterwards.
         let mut best_start: Option<(TrailedDomains, HashMap<VariableId, i64>, HardSoftScore)> =
             None;
         for attempt in 0..CONSTRUCTION_ATTEMPTS {
@@ -225,7 +226,7 @@ impl LocalSearchSolver {
                 best_start = Some((domains, assignment, score));
             }
             if score.is_feasible() {
-                // Konfliktfrei — ein weiterer Anlauf kann das nicht mehr verbessern.
+                // Conflict-free — another attempt cannot improve on that.
                 break;
             }
         }
@@ -507,8 +508,8 @@ impl LocalSearchSolver {
             return None;
         }
 
-        // Die engsten Variablen zuerst, unter gleich engen gemischt. Wer die Variable mit der
-        // größten Auswahl zuerst festlegt, verbraucht Platz, den eine andere gleich braucht.
+        // Tightest variables first, shuffled among equally tight ones. Fixing the variable with
+        // the most choice first uses up room that another one is about to need.
         let mut var_ids: Vec<VariableId> = graph.variables().keys().copied().collect();
         var_ids.sort_unstable();
         rng.mix(&mut var_ids);
@@ -521,20 +522,20 @@ impl LocalSearchSolver {
         let mut assignment = HashMap::with_capacity(var_ids.len());
         let mut placed: Vec<VariableId> = Vec::with_capacity(var_ids.len());
         let mut queue: VecDeque<VariableId> = var_ids.into_iter().collect();
-        // Wie oft insgesamt zurückgenommen werden darf. Ohne Schranke kann sich das Zurücknehmen
-        // im Kreis drehen; mit ihr endet der Durchlauf immer, notfalls mit Konflikten.
+        // How many retractions are allowed in total. Without a bound, retracting can go round in
+        // circles; with it, the pass always terminates, if need be with conflicts.
         let mut retractions = queue.len().saturating_mul(RETRACTION_BUDGET_PER_VARIABLE);
 
         while let Some(var_id) = queue.pop_front() {
-            // Die Konstruktion kennt ihre Zeit. Ohne das lief ein einmal begonnener Anlauf zu
-            // Ende, gleich wie lange er brauchte: auf einer kleinen Instanz Millisekunden, auf
-            // einer großen zwanzig Sekunden — und die Reparatur danach fand ein abgelaufenes
-            // Limit vor und tat keinen einzigen Schritt (timbra plan/59).
+            // The construction respects its time limit. Without this, an attempt once started
+            // ran to completion no matter how long it took: milliseconds on a small instance,
+            // twenty seconds on a large one — and the repair afterwards found an expired limit
+            // and did not take a single step (timbra plan/59).
             //
-            // Abgebrochen wird **mit** einer vollständigen Belegung, nicht mit nichts: der
-            // Rest bekommt den ersten Wert seiner Domäne, ohne Konflikte zu zählen. Das ist
-            // schlechter als eine zu Ende gedachte Konstruktion und immer noch genau das,
-            // worauf die Reparatur aufsetzen kann. Eine halb belegte Rückgabe wäre keine.
+            // Aborting returns **with** a complete assignment, not with nothing: the rest gets
+            // the first value of its domain, without counting conflicts. That is worse than a
+            // construction carried through to the end and still exactly what repair can build
+            // on. A half-assigned result would not be.
             if check_abort(options, start_time, 0).is_some() {
                 for remaining in std::iter::once(var_id).chain(queue) {
                     if let Entry::Vacant(slot) = assignment.entry(remaining) {
@@ -547,9 +548,10 @@ impl LocalSearchSolver {
             let values = domains.get(&var_id)?.values();
             let (&first, rest) = values.split_first()?;
 
-            // Je Variable einmal vorbereitet, je Wert nur noch nachgeschlagen: eine Ressource
-            // trägt jeden Termin, der sie nutzen könnte, und sie je Wert ganz neu zu prüfen war
-            // auf dem Gymnasium (829 Termine) fast die ganze Konstruktionszeit (timbra Plan 53).
+            // Prepared once per variable, then only looked up per value: a resource carries
+            // every appointment that could use it, and re-checking it from scratch for every
+            // value was almost the entire construction time on the Gymnasium instance (829
+            // appointments) (timbra plan 53).
             let touched = TouchedConstraint::of(graph, var_id, &assignment);
             let mut best_value = first;
             let mut fewest = Self::conflicts_with(&touched, &mut assignment, var_id, first);
@@ -574,15 +576,14 @@ impl LocalSearchSolver {
                 continue;
             }
 
-            // Kein Wert passt konfliktfrei. Statt den Konflikt zu behalten und weiterzulaufen —
-            // was die bisherige Konstruktion tat und was jeden späteren Schritt auf einem Fehler
-            // aufbauen lässt — werden die zuletzt gesetzten Variablen zurückgenommen und neu
-            // versucht. Der Zufall in der Gleichstandswahl sorgt dafür, dass der zweite Versuch
-            // nicht derselbe ist.
+            // No value fits without conflict. Instead of keeping the conflict and carrying on —
+            // which the previous construction did, and which makes every later step build on a
+            // mistake — the most recently set variables are retracted and retried. The randomness
+            // in tie-breaking ensures the second try is not the same as the first.
             retractions -= 1;
             assignment.insert(var_id, best_value);
-            // Wer im Weg steht, steht im Constraint — nicht am Ende der Liste. Zurückgenommen
-            // wird, was die verletzten Constraints dieser Variablen sonst noch belegen.
+            // Whatever is in the way is in the constraint — not at the end of the list. What gets
+            // retracted is whatever else the violated constraints of this variable have assigned.
             let mut blocking: Vec<VariableId> = graph
                 .constraints_for_variable(var_id)
                 .iter()

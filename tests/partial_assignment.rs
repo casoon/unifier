@@ -1,23 +1,23 @@
-//! Der Vertrag, den `Constraint::is_satisfied` unter einer **partiellen** Belegung zusagt:
-//! `false` nur, wenn das bereits Belegte das Constraint verletzt — nicht schon, weil noch
-//! etwas fehlt.
+//! The contract that `Constraint::is_satisfied` promises under a **partial** assignment:
+//! `false` only if what is already assigned violates the constraint — not merely because
+//! something is still missing.
 //!
-//! Das steht so in der Dokumentation der Methode („or if unassigned variables do not violate
-//! the constraint yet"), und die meisten Constraints halten es: `AllDifferent` sieht nur die
-//! belegten Variablen, `Equal` vergleicht nur, wenn beide Seiten da sind, `AtMost` zählt
-//! nach oben. `ExactlyOne` (`== 1`) und `AtLeast` (`>= k`) taten es nicht — sie meldeten eine
-//! Gruppe als verletzt, in der noch niemand das Ziel belegt hatte, obwohl jede Variable darin
-//! es noch werden konnte.
+//! That is how the method's documentation states it ("or if unassigned variables do not violate
+//! the constraint yet"), and most constraints uphold it: `AllDifferent` only looks at the
+//! assigned variables, `Equal` only compares once both sides are present, `AtMost` counts
+//! upwards. `ExactlyOne` (`== 1`) and `AtLeast` (`>= k`) did not — they reported a group as
+//! violated in which nobody had taken the target yet, even though every variable in it could
+//! still become it.
 //!
-//! Warum das nicht kosmetisch ist: die gierige Konstruktion in `LocalSearchSolver` setzt eine
-//! Variable nur dann ohne Rücknahme, wenn *kein* Constraint verletzt ist. Eine Variable in
-//! einer noch unberührten Auswahlgruppe konnte diese Bedingung nie erfüllen und lief deshalb
-//! in die Rücknahme — samt der Variablen, die sie mitnahm. Gemessen in plan/58, K3.
+//! Why this is not cosmetic: the greedy construction in `LocalSearchSolver` only sets a variable
+//! without retraction when *no* constraint is violated. A variable in a still untouched choice
+//! group could never meet that condition and therefore ran into retraction — along with the
+//! variables it took with it. Measured in plan/58, K3.
 //!
-//! Auf einer **vollständigen** Belegung ändert der Vertrag nichts, und genau das prüfen die
-//! Tests hier mit: dort ist nichts unbelegt, und beide Constraints fallen auf ihre alte
-//! Bedingung zurück. Der harte Score, der über vollständige Belegungen summiert, sieht
-//! dieselben Zahlen wie vorher.
+//! On a **complete** assignment the contract changes nothing, and that is exactly what the tests
+//! here check as well: there nothing is unassigned, and both constraints fall back to their old
+//! condition. The hard score, which sums over complete assignments, sees the same numbers as
+//! before.
 
 use std::collections::HashMap;
 use unifier::VariableId;
@@ -36,20 +36,20 @@ fn exactly_one_waits_for_the_group_instead_of_crying_early() {
     let scope = vars(3);
     let constraint = ExactlyOne::new(scope.clone(), 1);
 
-    // Nichts belegt: jede der drei kann noch die eine werden.
+    // Nothing assigned: any of the three can still become the one.
     assert!(constraint.is_satisfied(&assign(&[])));
 
-    // Eine Null belegt, zwei offen: immer noch erreichbar.
+    // One zero assigned, two open: still reachable.
     assert!(constraint.is_satisfied(&assign(&[(scope[0], 0)])));
 
-    // Die eine steht — erfüllt, egal was noch kommt.
+    // The one is in place — satisfied, whatever comes next.
     assert!(constraint.is_satisfied(&assign(&[(scope[0], 1)])));
 
-    // Zwei stehen auf dem Ziel: das kommt nicht mehr herunter, also verletzt, auch partiell.
+    // Two are on the target: that will not come down again, so violated, even when partial.
     assert!(!constraint.is_satisfied(&assign(&[(scope[0], 1), (scope[1], 1)])));
 
-    // Vollständig belegt und keine auf dem Ziel: verletzt. Hier fällt der Vertrag auf die
-    // alte Bedingung zurück, und der harte Score zählt wie zuvor.
+    // Fully assigned and none on the target: violated. Here the contract falls back to the
+    // old condition, and the hard score counts as before.
     assert!(!constraint.is_satisfied(&assign(&[(scope[0], 0), (scope[1], 0), (scope[2], 0)])));
     assert!(constraint.is_satisfied(&assign(&[(scope[0], 0), (scope[1], 1), (scope[2], 0)])));
 }
@@ -61,20 +61,20 @@ fn at_least_waits_until_the_count_is_out_of_reach() {
 
     assert!(constraint.is_satisfied(&assign(&[])));
 
-    // Eine daneben, zwei offen — zwei sind noch erreichbar.
+    // One off target, two open — two are still reachable.
     assert!(constraint.is_satisfied(&assign(&[(scope[0], 0)])));
 
-    // Zwei daneben, eine offen: zwei sind nicht mehr erreichbar.
+    // Two off target, one open: two are no longer reachable.
     assert!(!constraint.is_satisfied(&assign(&[(scope[0], 0), (scope[1], 0)])));
 
-    // Vollständig, zwei auf dem Ziel: erfüllt.
+    // Complete, two on the target: satisfied.
     assert!(constraint.is_satisfied(&assign(&[(scope[0], 1), (scope[1], 1), (scope[2], 0)])));
-    // Vollständig, eine auf dem Ziel: verletzt.
+    // Complete, one on the target: violated.
     assert!(!constraint.is_satisfied(&assign(&[(scope[0], 1), (scope[1], 0), (scope[2], 0)])));
 }
 
-/// `AtMost` hielt den Vertrag schon immer — hier als Gegenprobe, damit die drei
-/// Kardinalitäts-Constraints nachweislich dieselbe Regel befolgen.
+/// `AtMost` always kept the contract — included here as a cross-check, so the three
+/// cardinality constraints demonstrably follow the same rule.
 #[test]
 fn at_most_already_kept_the_contract() {
     let scope = vars(3);
@@ -85,8 +85,8 @@ fn at_most_already_kept_the_contract() {
     assert!(!constraint.is_satisfied(&assign(&[(scope[0], 1), (scope[1], 1)])));
 }
 
-/// `violations()` und `is_satisfied()` dürfen nicht auseinanderlaufen — der harte Score ist
-/// die Summe der einen, und `is_feasible()` heißt `hard == 0`.
+/// `violations()` and `is_satisfied()` must not diverge — the hard score is the sum of the
+/// former, and `is_feasible()` means `hard == 0`.
 #[test]
 fn the_count_agrees_with_satisfaction_under_partial_assignments() {
     let scope = vars(3);
@@ -96,7 +96,7 @@ fn the_count_agrees_with_satisfaction_under_partial_assignments() {
         Box::new(AtMost::new(1, scope.clone(), 1)),
     ];
 
-    // Jede Teilbelegung über {nicht belegt, 0, 1} für drei Variablen.
+    // Every partial assignment over {unassigned, 0, 1} for three variables.
     for constraint in &cases {
         for a in [None, Some(0), Some(1)] {
             for b in [None, Some(0), Some(1)] {

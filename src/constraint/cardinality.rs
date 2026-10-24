@@ -26,7 +26,7 @@ fn count_at_target(
         .count()
 }
 
-/// Wie viele Variablen des Scopes noch offen sind — also das Ziel noch annehmen könnten.
+/// How many variables of the scope are still unassigned — i.e. could still take the target value.
 fn unassigned(scope: &[VariableId], assignment: &HashMap<VariableId, i64>) -> usize {
     scope.iter().filter(|v| !assignment.contains_key(v)).count()
 }
@@ -85,18 +85,17 @@ impl Constraint for ExactlyOne {
         &self.scope
     }
 
-    /// Verletzt, sobald es *nicht mehr* genau einer werden kann — nicht schon, solange noch
-    /// keiner es ist.
+    /// Violated as soon as it can *no longer* become exactly one — not already while none of
+    /// them is.
     ///
-    /// `Constraint::is_satisfied` sagt zu, unter einer partiellen Belegung nur dann `false` zu
-    /// melden, wenn bereits belegte Variablen das Constraint verletzen. `AllDifferent`,
-    /// `Equal` und `AtMost` halten das; `== 1` tat es nicht: eine Gruppe, deren Ziel noch
-    /// niemand belegt hat, meldete sich als verletzt, obwohl noch jede Variable darin es
-    /// werden kann.
+    /// `Constraint::is_satisfied` promises to report `false` under a partial assignment only
+    /// when already-assigned variables violate the constraint. `AllDifferent`, `Equal` and
+    /// `AtMost` uphold that; `== 1` did not: a group whose target nobody had taken yet reported
+    /// itself as violated, even though every variable in it could still become it.
     ///
-    /// Auf einer **vollständigen** Belegung ändert sich dadurch nichts — dort ist
-    /// `unassigned` null und die Bedingung fällt auf `== 1` zurück. Der harte Score, der über
-    /// vollständige Belegungen summiert, sieht also dieselben Zahlen wie vorher.
+    /// On a **complete** assignment this changes nothing — there `unassigned` is zero and the
+    /// condition falls back to `== 1`. The hard score, which sums over complete assignments,
+    /// therefore sees the same numbers as before.
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         match count_at_target(&self.scope, assignment, self.target_value) {
             1 => true,
@@ -289,7 +288,7 @@ impl Constraint for AtLeast {
         &self.scope
     }
 
-    /// Verletzt, sobald `k` nicht mehr erreichbar ist — siehe die Begründung bei
+    /// Violated as soon as `k` is no longer reachable — see the rationale at
     /// [`ExactlyOne::is_satisfied`].
     fn is_satisfied(&self, assignment: &HashMap<VariableId, i64>) -> bool {
         let at_target = count_at_target(&self.scope, assignment, self.target_value);

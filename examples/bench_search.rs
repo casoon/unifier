@@ -2,8 +2,8 @@
 //! representative corpus.
 //!
 //! Used to establish a baseline before attempting performance work, per
-//! `plan/09-project-reevaluation-roadmap.md`'s Meilenstein 0.2 guidance ("nach P0 messen und
-//! angehen" — measure, then act) for reversible domains/trail instead of a full domain-map clone
+//! `plan/09-project-reevaluation-roadmap.md`'s milestone 0.2 guidance ("measure after P0, then
+//! tackle" — measure, then act) for reversible domains/trail instead of a full domain-map clone
 //! per search node. Run again after such a change and compare nodes/sec.
 //!
 //! Run with `cargo run --release --example bench_search`. Release mode matters: debug-mode
@@ -289,7 +289,7 @@ fn main() {
         );
     }
     // Same model as `all_different_maximize(6) B&B` above, through the 4-worker portfolio
-    // instead: measures Meilenstein 0.4's join-overhead (every worker thread is now joined
+    // instead: measures milestone 0.4's join-overhead (every worker thread is now joined
     // before `solve()` returns, not left running in the background) head-to-head against
     // single-solver B&B on identical work. `nodes_expanded` sums across all four workers, so
     // nodes/sec isn't directly comparable to a sequential solver's — `wall` is the metric that

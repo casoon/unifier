@@ -1,64 +1,53 @@
 # unifier
 
-Rust-Crate: Modellierungs- und Solver-Framework für Constraint
-Satisfaction / Optimization Problems (CSP/COP), aufbauend auf
-[`pathwise`](https://github.com/casoon/pathwise)s generischen
-Search-/Optimization-Bausteinen. Konzept & Herkunft: `README.md`.
-Umsetzungsplan: `plan/`.
+Rust crate: modelling and solver framework for constraint satisfaction / optimization problems
+(CSP/COP), built on the generic search and optimization building blocks of
+[`pathwise`](https://github.com/casoon/pathwise). Concept and background: `README.md`. Local
+status and plans: `plan/` (gitignored).
 
-Projektname (Repo) und voraussichtlicher crates.io-Paketname sind
-identisch, `unifier` — vor Veröffentlichung Verfügbarkeit erneut prüfen.
+Published on crates.io as `unifier`; docs at https://casoon.github.io/unifier/.
 
-## Positionierung (siehe `plan/01-concept.md` für Details)
+## Positioning
 
-`pathwise` liefert generische Search-/Optimization-Strategien (A*,
-Branch & Bound, Local Search, ...) hinter einem `Problem`-Trait.
-`unifier` baut die CSP/COP-spezifische Schicht darüber: Variable/Domain,
-Constraint-Graph, globale Constraints (`AllDifferent`, `NoOverlap`,
-`Cumulative`, ...), Hard/Soft-Scoring, Constraint Propagation. Kein
-eigenständiger Ersatz für OR-Tools/MiniZinc/Timefold — diese sind
-Referenzen für Konzepte (Global Constraints, Score-Modell), nicht
-Vorbild für Code-Übernahme.
+`pathwise` provides generic search and optimization strategies (A*, Branch & Bound, local search,
+...) behind a `Problem` trait. `unifier` adds the CSP/COP layer on top: variables and domains, a
+constraint graph, global constraints (`AllDifferent`, `NoOverlap`, `Cumulative`, ...), hard/soft
+scoring, constraint propagation. It is not a stand-alone replacement for OR-Tools, MiniZinc or
+Timefold — those are references for concepts (global constraints, score model), not a source of
+code to copy.
 
-## Architektur (Arbeitstitel, siehe `plan/01-concept.md` für Details)
+## Architecture
 
 ```
 DSL              — problem-building surface API (activity/resource/rule)
-Constraint Model — Variable, Domain, Constraint-Graph (Hypergraph)
-Solver Engine    — Propagation, Backtracking, Branch & Bound,
-                    Local Search, LNS
-Runtime          — inkrementelles Scoring, Cancellation/Timeout,
-                    Anytime-Solving (parallele Suche: später)
+Constraint Model — variable, domain, constraint graph (hypergraph)
+Solver Engine    — propagation, backtracking, Branch & Bound,
+                    local search, LNS, parallel portfolio
+Runtime          — incremental scoring, cancellation/timeout,
+                    anytime solving
 ```
 
-Problemstruktur ist ein **Constraint-Graph**, kein Baum — der Baum
-entsteht erst im Lösungsprozess eines Solvers (Backtracking-Suchbaum,
-Branch-and-Bound-Zweige).
+The problem structure is a **constraint graph**, not a tree — a tree only appears while a solver
+works (the backtracking search tree, Branch & Bound branches).
 
-`unifier` ist die CSP/COP-Schicht im Stapel
-`pathwise → unifier → schedulr → Anwendungen`. Die vorhandenen
-Scheduling-Primitives (`Activity`, `Interval`, `Resource`, `Group`) und
-deren Compiler bleiben als Unterbau in `unifier`; `schedulr` kapselt sie
-hinter seinem domänenneutralen API und ergänzt Zustands-/Buchungslogik.
+`unifier` is the CSP/COP layer in the stack `pathwise → unifier → schedulr → applications`. The
+scheduling primitives (`Activity`, `Interval`, `Resource`, `Group`) and their compiler stay in
+`unifier` as the foundation; `schedulr` wraps them behind its domain-neutral API and adds state
+and booking logic.
 
-## Arbeitsweise
+## Working
 
-- Aktueller Stand & nächster Schritt: `plan/00-STATUS.md`.
-- Konzept & Scope-Entscheidungen: `plan/01-concept.md`.
-- Getroffene Entscheidungen: `plan/DECISIONS.md` — dort nachschlagen,
-  bevor offene Fragen neu aufgerollt werden.
+- Current status and next step: `plan/00-STATUS.md`.
+- Before a push: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`,
+  `cargo doc --no-deps` without warnings.
 
-## Feste Regeln
+## Fixed rules
 
-- Lizenz: **MIT**, von Anfang an (`Cargo.toml`: `license = "MIT"`).
-- Kein `unsafe` ohne expliziten Grund und Kommentar.
-- Nichts implementieren, wofür `pathwise`, `std` oder ein etabliertes
-  Crate bereits eine gute Lösung bietet.
-- Jede öffentliche Funktion/jeder Constraint dokumentiert Komplexität,
-  Voraussetzungen und Referenz (Originalpaper/Fachliteratur), nicht nur
-  eine Kurzbeschreibung.
-
-## Definition of Done
-
-Noch nicht definiert — Konzeptphase. Wird pro Phase in `plan/0N-*.md`
-festgelegt, sobald mit der Implementierung begonnen wird.
+- Language: **English** for everything in the repository — code, identifiers, comments, doc
+  comments, string literals, tests, docs and commit messages. Only `plan/` (local, gitignored)
+  may be German.
+- License: **MIT** (`Cargo.toml`: `license = "MIT"`).
+- No `unsafe` without an explicit reason and a comment.
+- Do not implement what `pathwise`, `std` or an established crate already solves well.
+- Every public function and every constraint documents complexity, preconditions and a reference
+  (original paper or textbook), not just a one-line summary.
