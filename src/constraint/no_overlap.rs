@@ -91,7 +91,7 @@ impl NoOverlap {
 /// *detection-only* (no bound update) technique this crate uses for `Cumulative` — the
 /// multi-capacity generalization of this update rule is genuinely more involved (concurrent
 /// tasks mean "i must follow Omega" isn't implied by overload alone) and was deliberately not
-/// attempted here; see part D's "Ergebnis" section for the reasoning.
+/// attempted here; see the result section of part D for the reasoning.
 ///
 /// Candidate `Omega` sets are enumerated the same way as `energetic_overload`: for each task `i`,
 /// for each candidate `lct` threshold `b` (drawn from the other tasks' actual `lct` values,
