@@ -10,6 +10,12 @@ the repository history records them after the fact, one commit per release.
 
 ## [Unreleased]
 
+### Changed
+
+- **Website:** the [start page](https://casoon.github.io/unifier/) shows a recorded run of the
+  `job_shop` example and a chart of its optimal schedule; the full quickstart program lives in
+  the [documentation](https://casoon.github.io/unifier/docs/getting-started/quickstart/).
+
 ## [0.6.0] - 2026-10-24
 
 ### Breaking

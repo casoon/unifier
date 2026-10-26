@@ -1,0 +1,18 @@
+# The start-page scene: examples/output/job_shop.txt as captured by
+# scripts/regenerate-showcase.sh (`cargo run --quiet --release --example job_shop`), shown
+# unchanged. 50 columns fit the longest line, so one scene serves desktop and phones. Rebuild
+# after a new capture:
+#   cd site/captures && npx -y -p @casoon/castwright@0.5.0 -p shiki castwright build job-shop.terminal.yaml --format svg -o .
+version: 1
+terminal:
+  title: unifier
+  cols: 50
+  rows: 13
+  theme: catppuccin-mocha
+steps:
+  - run: cargo run -q --release --example job_shop
+  - wait: 900
+  - show: ../../examples/output/job_shop.txt
+    lang: text
+    delay: 80
+  - wait: 6000
