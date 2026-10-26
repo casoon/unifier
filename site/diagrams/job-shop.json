@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "type": "rangebar",
+  "orientation": "horizontal",
+  "title": "The job shop, solved: makespan 11",
+  "description": "The optimal schedule that examples/job_shop.rs prints, one bar per operation, grouped by machine. Machine M0 runs job 0 from 0 to 3 and job 1 from 3 to 5. M1 runs job 2 from 0 to 4, job 0 from 4 to 6 and job 1 from 6 to 10. M2 runs job 1 from 5 to 6, job 2 from 6 to 9 and job 0 from 9 to 11. No machine runs two operations at once, every job keeps its order of operations, and the last operation ends at 11.",
+  "source": "examples/output/job_shop.txt (cargo run --example job_shop), durations from JOBS in examples/job_shop.rs",
+  "width": 900,
+  "height": 360,
+  "showValues": false,
+  "valueAxis": {
+    "title": "Time units",
+    "min": 0,
+    "max": 11,
+    "step": 1,
+    "exact": true
+  },
+  "references": [
+    {
+      "label": "Makespan 11",
+      "value": 11
+    }
+  ],
+  "ranges": [
+    {
+      "label": "M0 · job 0",
+      "low": 0,
+      "high": 3,
+      "group": "Job 0"
+    },
+    {
+      "label": "M0 · job 1",
+      "low": 3,
+      "high": 5,
+      "group": "Job 1"
+    },
+    {
+      "label": "M1 · job 2",
+      "low": 0,
+      "high": 4,
+      "group": "Job 2"
+    },
+    {
+      "label": "M1 · job 0",
+      "low": 4,
+      "high": 6,
+      "group": "Job 0"
+    },
+    {
+      "label": "M1 · job 1",
+      "low": 6,
+      "high": 10,
+      "group": "Job 1"
+    },
+    {
+      "label": "M2 · job 1",
+      "low": 5,
+      "high": 6,
+      "group": "Job 1"
+    },
+    {
+      "label": "M2 · job 2",
+      "low": 6,
+      "high": 9,
+      "group": "Job 2"
+    },
+    {
+      "label": "M2 · job 0",
+      "low": 9,
+      "high": 11,
+      "group": "Job 0"
+    }
+  ]
+}
