@@ -1,22 +1,33 @@
 ---
+import { readFile } from 'node:fs/promises';
 import {
   Badge,
   Badges,
   Button,
   CodeBlock,
   Facts,
+  Faq,
   Features,
   Hero,
   Install,
   Quickstart,
+  ReleaseHighlights,
 } from '@casoon/pages-theme/components';
 import Base from '@casoon/pages-theme/layouts/Base.astro';
 import config from 'virtual:casoon-pages/config';
+import { parseChangelog } from '@casoon/pages-theme/lib/changelog';
 import { url } from '@casoon/pages-theme/url';
 // Animated SVG built with castwright from site/captures/job-shop.terminal.yaml: the captured
 // output of the job_shop example in examples/output/job_shop.txt, unchanged.
 import jobShopSvg from '../../captures/job-shop.svg?url';
 import Diagram from '../components/Diagram.astro';
+
+// Skip "Unreleased": it has no version to show as "New in v…" yet.
+const latestRelease = config.changelog
+  ? parseChangelog(await readFile(config.changelog, 'utf8')).find(
+      (r) => r.version.toLowerCase() !== 'unreleased'
+    )
+  : undefined;
 
 const mainRs = `let mut model = ModelBuilder::new();
 let a = model.new_var("a", 1..=4);
@@ -122,6 +133,29 @@ let outcome = BranchAndBoundSolver::new().solve(&graph, &SolverOptions::default(
       <Button href={url('docs/getting-started/quickstart/')} variant="secondary">Read the quickstart</Button>
     </div>
   </Quickstart>
+
+  {latestRelease && <ReleaseHighlights release={latestRelease} />}
+
+  <Faq
+    items={[
+      {
+        q: 'What kind of problems is unifier for?',
+        a: 'Constraint Satisfaction and Optimization Problems: variables, domains and rules, plus an objective once something should be optimized rather than just satisfied. Typical instances are scheduling, timetabling and resource allocation, but also puzzles and assignments such as map colouring or eight queens.',
+      },
+      {
+        q: 'How does unifier relate to pathwise?',
+        a: "It does not implement pathwise's Problem or OptimizationProblem traits or route search through its generic algorithms. unifier ships its own CSP/COP-specialized solver stack, and shares only two generic, CSP-independent primitives with pathwise: a cancellation token and a shared incumbent for anytime and parallel search coordination.",
+      },
+      {
+        q: 'What happens when a solver runs out of time?',
+        a: "A SolveOutcome reports Aborted(reason) together with the best solution found so far, not nothing. Branch & Bound additionally reports a score bound, so you can see how far the result is from a proven optimum.",
+      },
+      {
+        q: 'Is unifier ready for production use?',
+        a: 'It is early (0.x) but published to crates.io, with the core model, constraint propagation, global constraints, hard/soft scoring and all five solver strategies implemented and tested. General unsat cores, serde-based serialization or a CLI, and independent verification on production-scale scheduling scenarios are not yet covered — evaluate accordingly before relying on it for production planning.',
+      },
+    ]}
+  />
 </Base>
 
 <style>

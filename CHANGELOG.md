@@ -15,6 +15,8 @@ the repository history records them after the fact, one commit per release.
 - **Website:** the [start page](https://casoon.github.io/unifier/) shows a recorded run of the
   `job_shop` example and a chart of its optimal schedule; the full quickstart program lives in
   the [documentation](https://casoon.github.io/unifier/docs/getting-started/quickstart/).
+- **Website:** the footer now follows the page language instead of always showing German text,
+  and the start page carries a release teaser and an FAQ (theme 0.11.1).
 
 ## [0.6.0] - 2026-10-24
 
