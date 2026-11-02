@@ -12,7 +12,7 @@ the repository history records them after the fact, one commit per release.
 
 ### Changed
 
-- **Pages:** the project site uses the current shared theme (0.12.5).
+- **Pages:** the project site uses the current shared theme (0.12.6).
 - **Website:** the [start page](https://casoon.github.io/unifier/) shows a recorded run of the
   `job_shop` example and a chart of its optimal schedule; the full quickstart program lives in
   the [documentation](https://casoon.github.io/unifier/docs/getting-started/quickstart/).
